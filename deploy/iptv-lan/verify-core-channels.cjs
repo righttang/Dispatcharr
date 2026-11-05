@@ -13,7 +13,7 @@ const credentials = Object.fromEntries(fs.readFileSync(root + '/.env', 'utf8').t
   try {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     let page = await context.newPage();
-    await page.goto(base + '/channels');
+    await page.goto(base + '/login?next=%2Fchannels');
     await page.locator('input[name=username]').fill(credentials.DISPATCHARR_ADMIN_USERNAME);
     await page.locator('input[name=password]').fill(credentials.DISPATCHARR_ADMIN_PASSWORD);
     await page.getByRole('button', { name: 'Login', exact: true }).click();

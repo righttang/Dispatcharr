@@ -1310,7 +1310,7 @@ class ProxyServer:
         """
         Start an output format manager for this channel if not already running.
         Only the TS-owning worker starts the manager; non-owners read the shared buffer.
-        Returns True if a manager is active (locally or on another worker).
+        Returns True if a manager is available; HLS may still be preparing segments.
         """
         if channel_id in self.output_managers and fmt in self.output_managers[channel_id]:
             return True
@@ -1319,10 +1319,11 @@ class ProxyServer:
             return False
 
         state = self.redis_client.get(RedisKeys.output_state(channel_id, fmt))
-        if state == 'active':
+        hls_starting = state == 'initializing' and self._parse_output_key(fmt)[0] == 'hls'
+        if state == 'active' or hls_starting:
             owner_val = self.redis_client.get(RedisKeys.output_owner(channel_id, fmt))
             if owner_val and owner_val != self.worker_id:
-                logger.info(f"[output:{fmt}] Channel {channel_id}: manager active on another worker")
+                logger.info(f"[output:{fmt}] Channel {channel_id}: manager {state} on another worker")
                 return True
             # State says active but we have no local manager - stale state from a dead manager.
             # Fall through to restart if we can.
@@ -1347,7 +1348,10 @@ class ProxyServer:
             while time.time() < deadline:
                 gevent.sleep(0.1)
                 state = self.redis_client.get(RedisKeys.output_state(channel_id, fmt))
-                if state == 'active':
+                if state == 'active' or (
+                    state == 'initializing' and self._parse_output_key(fmt)[0] == 'hls'
+                    and self.redis_client.get(RedisKeys.output_owner(channel_id, fmt))
+                ):
                     logger.info(f"[output:{fmt}] Channel {channel_id}: manager started by owner")
                     return True
             logger.warning(f"[output:{fmt}] Channel {channel_id}: owner did not start manager within 5s")

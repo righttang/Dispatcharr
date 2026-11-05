@@ -300,8 +300,16 @@ describe('useAuthStore', () => {
   });
 
   describe('logout', () => {
+    it('enters guest mode without calling a protected logout endpoint', async () => {
+      await act(async () => { await useAuthStore.getState().logout(); });
+      expect(API.logout).not.toHaveBeenCalled();
+      expect(useAuthStore.getState().isCheckingAuth).toBe(false);
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    });
+
     it('should clear tokens and call logout API', async () => {
       API.logout.mockResolvedValue();
+      useAuthStore.setState({ isAuthenticated: true, accessToken: 'session-token' });
 
       const { result } = renderHook(() => useAuthStore());
 
@@ -321,6 +329,7 @@ describe('useAuthStore', () => {
 
     it('should continue logout even if API call fails', async () => {
       API.logout.mockRejectedValue(new Error('API error'));
+      useAuthStore.setState({ isAuthenticated: true, accessToken: 'session-token' });
 
       const { result } = renderHook(() => useAuthStore());
 

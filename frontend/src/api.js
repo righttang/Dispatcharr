@@ -133,6 +133,10 @@ export default class API {
     return await useAuthStore.getState().getToken();
   }
 
+  static async getPublicWatchChannels() {
+    return await request(`${host}/api/watch/channels/`, { auth: false, cache: 'no-store' });
+  }
+
   /**
    * Fetch all pages for a paginated endpoint when you already know totalCount.
    * Builds page calls from totalCount and pageSize and aggregates all results.
@@ -243,7 +247,6 @@ export default class API {
       if (error.status === 401 || error.message?.includes('does not exist')) {
         localStorage.removeItem('token');
         localStorage.removeItem('refreshToken');
-        window.location.href = '/login'; // Redirect to login
       }
       throw error;
     }

@@ -13,7 +13,7 @@ const credentials = Object.fromEntries(fs.readFileSync(root + '/.env', 'utf8').t
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   try {
-    await page.goto('http://192.168.50.84:9191/', { waitUntil: 'networkidle' });
+    await page.goto('http://192.168.50.84:9191/login?next=%2Fchannels', { waitUntil: 'networkidle' });
     await page.locator('input[name=username]').fill(credentials.DISPATCHARR_ADMIN_USERNAME);
     await page.locator('input[name=password]').fill(credentials.DISPATCHARR_ADMIN_PASSWORD);
     await page.getByRole('button', { name: 'Login', exact: true }).click();

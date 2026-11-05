@@ -7,13 +7,13 @@ export const PLAYER_PREFS_KEY = 'dispatcharr-player-prefs';
  * exact value, for Standard/Admin on /proxy/ts/stream/. Ignored for XC
  * requests and Streamer accounts.
  */
-export const buildLiveStreamUrl = (path) => {
+export const buildLiveStreamUrl = (path, { useSavedProfile = true } = {}) => {
   const prefs = getPlayerPrefs();
   const params = new URLSearchParams({
     output_format: 'mpegts',
     skip_redirect: 'true',
   });
-  const profileId = prefs.webPlayerOutputProfileId;
+  const profileId = useSavedProfile && prefs.webPlayerOutputProfileId;
   if (profileId) params.set('output_profile', String(profileId));
   return `${path}?${params.toString()}`;
 };

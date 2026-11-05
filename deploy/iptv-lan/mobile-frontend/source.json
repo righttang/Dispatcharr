@@ -9,6 +9,10 @@
     "src/MobileChannels.test.jsx": "frontend/src/components/__tests__/MobileChannels.test.jsx",
     "src/LiveAirPlay.js": "frontend/src/utils/components/LiveAirPlay.js",
     "src/LiveAirPlay.test.js": "frontend/src/utils/components/__tests__/LiveAirPlay.test.js",
-    "src/hls-http-range.py": "apps/proxy/live_proxy/output/hls/http_range.py"
+    "src/hls-http-range.py": "apps/proxy/live_proxy/output/hls/http_range.py",
+    "src/PublicWatch.jsx": "frontend/src/pages/PublicWatch.jsx",
+    "src/public-watch.py": "apps/channels/public_watch.py",
+    "src/test-public-watch.py": "apps/channels/tests/test_public_watch.py",
+    "src/test-hls-output-startup.py": "apps/proxy/live_proxy/tests/test_hls_output_startup.py"
   }
 }

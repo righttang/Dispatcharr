@@ -24,6 +24,67 @@ function setup(response = {}) {
 describe('Live AirPlay', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('retries a transient server setup error before using the ready HLS session', async () => {
+    const { player, fetcher, video, onError } = setup();
+    fetcher.mockResolvedValueOnce({ ok: false, status: 500 });
+    vi.useFakeTimers();
+    try {
+      const starting = player.start();
+      await vi.advanceTimersByTimeAsync(1000);
+      await starting;
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(video.src).toBe(sessionUrl + '?native=1');
+      expect(onError).not.toHaveBeenCalled();
+      player.destroy();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('does not retry rejected credentials', async () => {
+    const { player, fetcher, onError } = setup({ ok: false, status: 401 });
+    await player.start();
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
+  it('limits server retries and stops retrying after cancellation', async () => {
+    const { player, fetcher, onError } = setup({ ok: false, status: 503 });
+    vi.useFakeTimers();
+    try {
+      const starting = player.start();
+      await vi.advanceTimersByTimeAsync(2000);
+      await starting;
+      expect(fetcher).toHaveBeenCalledTimes(3);
+      expect(onError).toHaveBeenCalledOnce();
+      const another = setup({ ok: false, status: 503 });
+      const canceled = another.player.start();
+      await vi.advanceTimersByTimeAsync(0);
+      another.player.destroy();
+      await vi.advanceTimersByTimeAsync(1000);
+      await canceled;
+      expect(another.fetcher).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('plays and releases an anonymous session without requesting or sending login credentials', async () => {
+    const video = document.createElement('video');
+    video.play = vi.fn().mockResolvedValue();
+    const getToken = vi.fn();
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, url: sessionUrl, text: async () => playlist });
+    const player = createNativeLivePlayer({
+      video, url: origin + '/proxy/ts/stream/channel?output_format=hls', anonymous: true, getToken, fetcher,
+      onReady: vi.fn(), onPlaying: vi.fn(), onError: vi.fn(),
+    });
+    await player.start();
+    expect(getToken).not.toHaveBeenCalled();
+    expect(fetcher.mock.calls[0][1].headers).toBeUndefined();
+    expect(video.src).toBe(sessionUrl + '?native=1');
+    player.destroy();
+    expect(fetcher.mock.calls[1]).toEqual([
+      origin + '/api/watch/sessions/test-session/',
+      { method: 'DELETE', headers: undefined, keepalive: true },
+    ]);
+  });
+
   it('requests HLS while preserving the selected output profile', () => {
     const url = new URL(buildNativeHlsUrl('/proxy/ts/stream/channel?output_format=mpegts&output_profile=5', origin));
     expect(url.searchParams.get('output_format')).toBe('hls');

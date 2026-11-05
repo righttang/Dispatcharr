@@ -55,7 +55,7 @@ async function autofillAndSubmit(page) {
         detail: status === 401 ? 'No active account found with the given credentials' : 'Request was throttled.',
       }) });
     });
-    await page.goto(base + '/channels', { waitUntil: 'networkidle' });
+    await page.goto(base + '/login?next=%2Fchannels', { waitUntil: 'networkidle' });
     await page.locator('input[name=password]').waitFor();
     await autofillAndSubmit(page);
     await page.getByRole('alert').filter({ hasText: '用户名或密码不正确' }).waitFor();
@@ -85,7 +85,7 @@ async function autofillAndSubmit(page) {
         }
         await route.continue();
       });
-      await actual.goto(base + '/channels', { waitUntil: 'networkidle' });
+      await actual.goto(base + '/login?next=%2Fchannels', { waitUntil: 'networkidle' });
       await actual.locator('input[name=password]').waitFor();
       await autofillAndSubmit(actual);
       await actual.locator('.mobile-channel-card').first().waitFor({ timeout: 30000 });

@@ -43,10 +43,15 @@ services:
       - ./mobile-frontend/dist:/app/frontend/dist:ro
       - ./thumbnails:/app/static/channel-thumbnails:ro
       - ./capture-thumbnail.py:/opt/iptv-tools/capture-thumbnail.py:ro
+      - ./upstream/dispatcharr-mobile/docker/entrypoint.sh:/app/docker/entrypoint.sh:ro
+      - ./upstream/dispatcharr-mobile/apps/api/urls.py:/app/apps/api/urls.py:ro
+      - ./upstream/dispatcharr-mobile/apps/channels/public_watch.py:/app/apps/channels/public_watch.py:ro
+      - ./upstream/dispatcharr-mobile/apps/proxy/live_proxy/server.py:/app/apps/proxy/live_proxy/server.py:ro
       - ./upstream/dispatcharr-mobile/apps/proxy/live_proxy/output/hls/views.py:/app/apps/proxy/live_proxy/output/hls/views.py:ro
       - ./upstream/dispatcharr-mobile/apps/proxy/live_proxy/output/hls/http_range.py:/app/apps/proxy/live_proxy/output/hls/http_range.py:ro
     environment:
       DISPATCHARR_ENV: aio
+      DISPATCHARR_PUBLIC_WATCH: "1"
       REDIS_HOST: localhost
       CELERY_BROKER_URL: redis://localhost:6379/0
       DISPATCHARR_LOG_LEVEL: info

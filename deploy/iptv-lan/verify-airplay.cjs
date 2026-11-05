@@ -55,7 +55,7 @@ async function waitForFrames(page, previous = null) {
         checks.sessionDeleteStatuses.push(response.status());
       }
     });
-    await page.goto(base + '/channels', { waitUntil: 'networkidle' });
+    await page.goto(base + '/login?next=%2Fchannels', { waitUntil: 'networkidle' });
     await page.locator('input[name=username]').fill(config.DISPATCHARR_ADMIN_USERNAME);
     await page.locator('input[name=password]').fill(config.DISPATCHARR_ADMIN_PASSWORD);
     await page.getByRole('button', { name: 'Login', exact: true }).click();

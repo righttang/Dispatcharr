@@ -1,3 +1,21 @@
+diff --git a/apps/api/urls.py b/apps/api/urls.py
+index 3e9d03a..d3f9c0c 100644
+--- a/apps/api/urls.py
++++ b/apps/api/urls.py
+@@ -2,10 +2,13 @@ from django.urls import path, include, re_path
+ from drf_spectacular.views import SpectacularSwaggerView, SpectacularRedocView
+ 
+ from apps.api.schema_views import LockedSpectacularAPIView
++from apps.channels import public_watch
+ 
+ app_name = 'api'
+ 
+ urlpatterns = [
++    path('watch/channels/', public_watch.channel_catalog, name='public-watch-channels'),
++    path('watch/sessions/<str:token>/', public_watch.destroy_anonymous_session, name='public-watch-session'),
+     path('accounts/', include(('apps.accounts.api_urls', 'accounts'), namespace='accounts')),
+     path('channels/', include(('apps.channels.api_urls', 'channels'), namespace='channels')),
+     path('epg/', include(('apps.epg.api_urls', 'epg'), namespace='epg')),
 diff --git a/apps/proxy/live_proxy/output/hls/views.py b/apps/proxy/live_proxy/output/hls/views.py
 index c7fc16a..cdf9fda 100644
 --- a/apps/proxy/live_proxy/output/hls/views.py
@@ -114,8 +132,60 @@ index c7fc16a..cdf9fda 100644
      finally:
          # Keep parity with playlist: release any borrowed connections promptly.
          close_old_connections()
+diff --git a/apps/proxy/live_proxy/server.py b/apps/proxy/live_proxy/server.py
+index 576d275..b70bbe2 100644
+--- a/apps/proxy/live_proxy/server.py
++++ b/apps/proxy/live_proxy/server.py
+@@ -1310,7 +1310,7 @@ class ProxyServer:
+         """
+         Start an output format manager for this channel if not already running.
+         Only the TS-owning worker starts the manager; non-owners read the shared buffer.
+-        Returns True if a manager is active (locally or on another worker).
++        Returns True if a manager is available; HLS may still be preparing segments.
+         """
+         if channel_id in self.output_managers and fmt in self.output_managers[channel_id]:
+             return True
+@@ -1319,10 +1319,11 @@ class ProxyServer:
+             return False
+ 
+         state = self.redis_client.get(RedisKeys.output_state(channel_id, fmt))
+-        if state == 'active':
++        hls_starting = state == 'initializing' and self._parse_output_key(fmt)[0] == 'hls'
++        if state == 'active' or hls_starting:
+             owner_val = self.redis_client.get(RedisKeys.output_owner(channel_id, fmt))
+             if owner_val and owner_val != self.worker_id:
+-                logger.info(f"[output:{fmt}] Channel {channel_id}: manager active on another worker")
++                logger.info(f"[output:{fmt}] Channel {channel_id}: manager {state} on another worker")
+                 return True
+             # State says active but we have no local manager - stale state from a dead manager.
+             # Fall through to restart if we can.
+@@ -1347,7 +1348,10 @@ class ProxyServer:
+             while time.time() < deadline:
+                 gevent.sleep(0.1)
+                 state = self.redis_client.get(RedisKeys.output_state(channel_id, fmt))
+-                if state == 'active':
++                if state == 'active' or (
++                    state == 'initializing' and self._parse_output_key(fmt)[0] == 'hls'
++                    and self.redis_client.get(RedisKeys.output_owner(channel_id, fmt))
++                ):
+                     logger.info(f"[output:{fmt}] Channel {channel_id}: manager started by owner")
+                     return True
+             logger.warning(f"[output:{fmt}] Channel {channel_id}: owner did not start manager within 5s")
+diff --git a/docker/entrypoint.sh b/docker/entrypoint.sh
+index b17b3a5..4a30646 100755
+--- a/docker/entrypoint.sh
++++ b/docker/entrypoint.sh
+@@ -254,7 +254,7 @@ for _opt_var in POSTGRES_SSL POSTGRES_SSL_MODE POSTGRES_SSL_CA_CERT POSTGRES_SSL
+                 REDIS_SSL REDIS_SSL_VERIFY REDIS_SSL_CA_CERT REDIS_SSL_CERT REDIS_SSL_KEY \
+                 DISPATCHARR_SETUP_ALLOWED_IP DISPATCHARR_TRUSTED_PROXIES \
+                 DJANGO_SETTINGS_MODULE PYTHONUNBUFFERED PYTHONDONTWRITEBYTECODE \
+-                DISPATCHARR_DEBUG DISPATCHARR_ENABLE_IP_LOOKUP LIBVA_DRIVER_NAME DISPATCHARR_LOG_DIR \
++                DISPATCHARR_DEBUG DISPATCHARR_PUBLIC_WATCH DISPATCHARR_ENABLE_IP_LOOKUP LIBVA_DRIVER_NAME DISPATCHARR_LOG_DIR \
+                 TMDB_API_KEY OMDB_API_KEY; do
+     if [ -n "${!_opt_var+x}" ]; then
+         variables+=("$_opt_var")
 diff --git a/frontend/src/App.jsx b/frontend/src/App.jsx
-index 1dbeb04..b16f708 100644
+index 1dbeb04..c6ab6fa 100644
 --- a/frontend/src/App.jsx
 +++ b/frontend/src/App.jsx
 @@ -1,4 +1,4 @@
@@ -124,7 +194,15 @@ index 1dbeb04..b16f708 100644
  import {
    BrowserRouter as Router,
    Route,
-@@ -26,7 +26,8 @@ import useAuthStore from './store/auth';
+@@ -9,6 +9,7 @@ import {
+ import Sidebar from './components/Sidebar';
+ import Login, { LoginLoadingCard } from './pages/Login';
+ import Channels from './pages/Channels';
++import PublicWatch from './pages/PublicWatch';
+ import ContentSources from './pages/ContentSources';
+ import Guide from './pages/Guide';
+ import Stats from './pages/Stats';
+@@ -26,7 +27,8 @@ import useAuthStore from './store/auth';
  import useBrowserStorage from './hooks/useBrowserStorage';
  import FloatingVideo from './components/FloatingVideo';
  import { WebsocketProvider } from './WebSocket';
@@ -134,15 +212,16 @@ index 1dbeb04..b16f708 100644
  import '@mantine/core/styles.css'; // Ensure Mantine global styles load
  import '@mantine/notifications/styles.css';
  import '@mantine/dropzone/styles.css';
-@@ -39,6 +40,7 @@ import M3URefreshNotification from './components/M3URefreshNotification';
+@@ -39,6 +41,8 @@ import M3URefreshNotification from './components/M3URefreshNotification';
  import ErrorBoundary from './components/ErrorBoundary';
  import { defaultRoute, getSafeNextPath } from './utils/loginRedirect';
  import 'allotment/dist/style.css';
 +import './mobile.css';
++import { USER_LEVELS } from './constants';
  
  const drawerWidth = 240;
  const miniDrawerWidth = 60;
-@@ -51,6 +53,8 @@ const LoginRedirect = () => {
+@@ -51,8 +55,11 @@ const LoginRedirect = () => {
  };
  
  const App = () => {
@@ -150,8 +229,11 @@ index 1dbeb04..b16f708 100644
 +  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
    const [open, setOpen] = useBrowserStorage('dispatcharr_sidebar_open', true);
    const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
++  const canManage = useAuthStore((s) => s.user?.user_level >= USER_LEVELS.ADMIN);
    const isInitialized = useAuthStore((s) => s.isInitialized);
-@@ -127,20 +131,39 @@ const App = () => {
+   const authReady = isAuthenticated && isInitialized;
+   const isCheckingAuth = useAuthStore((s) => s.isCheckingAuth);
+@@ -127,20 +134,41 @@ const App = () => {
          <WebsocketProvider>
            <Router>
              <AppShell
@@ -171,7 +253,9 @@ index 1dbeb04..b16f708 100644
 +                  <Burger opened={mobileMenuOpen} onClick={() => setMobileMenuOpen((value) => !value)}
 +                    size="sm" aria-expanded={mobileMenuOpen} aria-label={mobileMenuOpen ? '关闭菜单' : '打开菜单'} />
 +                  <a href="/channels" className="mobile-brand">电视直播</a>
-+                  <span className="mobile-topbar-label">Dispatcharr</span>
++                  {canManage
++                    ? <a href="/manage/channels" className="mobile-manage-link">管理频道</a>
++                    : <span className="mobile-topbar-label">Dispatcharr</span>}
 +                </AppShell.Header>
 +              )}
 +              {isMobile && mobileMenuOpen && (
@@ -194,7 +278,7 @@ index 1dbeb04..b16f708 100644
                )}
  
                <AppShell.Main>
-@@ -150,11 +173,11 @@ const App = () => {
+@@ -150,11 +178,11 @@ const App = () => {
                      flexDirection: 'column',
                      // transition: 'margin-left 0.3s',
                      backgroundColor: '#18181b',
@@ -208,8 +292,52 @@ index 1dbeb04..b16f708 100644
                      {isCheckingAuth ? (
                        <LoginLoadingCard />
                      ) : (
+@@ -162,6 +190,7 @@ const App = () => {
+                         {authReady ? (
+                           <>
+                             <Route path="/channels" element={<Channels />} />
++                            <Route path="/manage/channels" element={<Channels management />} />
+                             <Route
+                               path="/sources"
+                               element={<ContentSources />}
+@@ -186,7 +215,11 @@ const App = () => {
+                             <Route path="/vods" element={<VODsPage />} />
+                           </>
+                         ) : (
+-                          <Route path="/login" element={<Login />} />
++                          <>
++                            <Route path="/" element={<Navigate to="/channels" replace />} />
++                            <Route path="/channels" element={<PublicWatch />} />
++                            <Route path="/login" element={<Login />} />
++                          </>
+                         )}
+                         <Route
+                           path="*"
+diff --git a/frontend/src/api.js b/frontend/src/api.js
+index 4a9333e..9f88b9f 100644
+--- a/frontend/src/api.js
++++ b/frontend/src/api.js
+@@ -133,6 +133,10 @@ export default class API {
+     return await useAuthStore.getState().getToken();
+   }
+ 
++  static async getPublicWatchChannels() {
++    return await request(`${host}/api/watch/channels/`, { auth: false, cache: 'no-store' });
++  }
++
+   /**
+    * Fetch all pages for a paginated endpoint when you already know totalCount.
+    * Builds page calls from totalCount and pageSize and aggregates all results.
+@@ -243,7 +247,6 @@ export default class API {
+       if (error.status === 401 || error.message?.includes('does not exist')) {
+         localStorage.removeItem('token');
+         localStorage.removeItem('refreshToken');
+-        window.location.href = '/login'; // Redirect to login
+       }
+       throw error;
+     }
 diff --git a/frontend/src/components/FloatingVideo.jsx b/frontend/src/components/FloatingVideo.jsx
-index f7cf37b..33c6b3f 100644
+index f7cf37b..4e8a4e7 100644
 --- a/frontend/src/components/FloatingVideo.jsx
 +++ b/frontend/src/components/FloatingVideo.jsx
 @@ -3,9 +3,14 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -291,16 +419,17 @@ index f7cf37b..33c6b3f 100644
          } catch (error) {
            if (
              error.name !== 'AbortError' &&
-@@ -460,6 +478,38 @@ export default function FloatingVideo() {
+@@ -460,6 +478,39 @@ export default function FloatingVideo() {
      setShowControls(false);
  
      try {
 +      if (supportsNativeAirPlay(videoRef.current)) {
 +        const player = createNativeLivePlayer({
 +          video: videoRef.current,
-+          url: buildNativeHlsUrl(streamUrl, window.location.origin, airPlayOutputProfile(
-+            metadata, useOutputProfilesStore.getState().profiles, useStreamProfilesStore.getState().profiles
-+          )),
++          url: buildNativeHlsUrl(streamUrl, window.location.origin, metadata?.publicView
++            ? metadata.nativeOutputProfileId
++            : airPlayOutputProfile(metadata, useOutputProfilesStore.getState().profiles, useStreamProfilesStore.getState().profiles)),
++          anonymous: Boolean(metadata?.publicView),
 +          getToken: () => useAuthStore.getState().getToken(),
 +          onReady: () => {
 +            if (playerRef.current !== player) return;
@@ -330,7 +459,16 @@ index f7cf37b..33c6b3f 100644
        if (!mpegts.getFeatureList().mseLivePlayback) {
          setIsLoading(false);
          setLoadError(
-@@ -609,7 +659,7 @@ export default function FloatingVideo() {
+@@ -481,7 +532,7 @@ export default function FloatingVideo() {
+       // is baked into the IO loader for the life of the player; we just want
+       // to be sure we use the freshest token available at the moment of
+       // connection rather than whatever React-render snapshot we closed over.
+-      const liveAccessToken = useAuthStore.getState().accessToken;
++      const liveAccessToken = metadata?.publicView ? null : useAuthStore.getState().accessToken;
+ 
+       const player = mpegts.createPlayer(
+         {
+@@ -609,7 +660,7 @@ export default function FloatingVideo() {
      }
  
      // Clean up any existing player
@@ -339,7 +477,7 @@ index f7cf37b..33c6b3f 100644
      reconnectAttemptsRef.current = 0;
  
      // Initialize the appropriate player based on content type
-@@ -627,10 +677,36 @@ export default function FloatingVideo() {
+@@ -627,10 +678,36 @@ export default function FloatingVideo() {
  
      return () => {
        video?.removeEventListener('volumechange', handleVolumeChange);
@@ -377,7 +515,7 @@ index f7cf37b..33c6b3f 100644
    // Modified hideVideo handler to clean up player first
    const handleClose = (e) => {
      if (e) {
-@@ -982,7 +1058,7 @@ export default function FloatingVideo() {
+@@ -982,7 +1059,7 @@ export default function FloatingVideo() {
      <Draggable
        nodeRef={videoContainerRef}
        cancel=".floating-video-no-drag"
@@ -386,7 +524,7 @@ index f7cf37b..33c6b3f 100644
        position={dragPosition || undefined}
        defaultPosition={initialPositionRef.current || { x: 0, y: 0 }}
        onStart={handleDragStart}
-@@ -991,6 +1067,7 @@ export default function FloatingVideo() {
+@@ -991,6 +1068,7 @@ export default function FloatingVideo() {
      >
        <div
          ref={videoContainerRef}
@@ -394,7 +532,7 @@ index f7cf37b..33c6b3f 100644
          style={{
            position: 'fixed',
            top: 0,
-@@ -1034,6 +1111,18 @@ export default function FloatingVideo() {
+@@ -1034,6 +1112,18 @@ export default function FloatingVideo() {
            ) : (
              <Box style={{ flex: 1 }} />
            )}
@@ -413,7 +551,7 @@ index f7cf37b..33c6b3f 100644
            <CloseButton
              onClick={handleClose}
              onTouchEnd={handleClose}
-@@ -1070,7 +1159,9 @@ export default function FloatingVideo() {
+@@ -1070,7 +1160,9 @@ export default function FloatingVideo() {
            {/* Enhanced video element with better controls for VOD */}
            <video
              ref={videoRef}
@@ -424,7 +562,7 @@ index f7cf37b..33c6b3f 100644
              className="floating-video-no-drag"
              style={{
                width: '100%',
-@@ -1164,7 +1255,7 @@ export default function FloatingVideo() {
+@@ -1164,7 +1256,7 @@ export default function FloatingVideo() {
            </Box>
          )}
  
@@ -700,7 +838,7 @@ index 1628715..c032a92 100644
        setupMocks({ loginResult: Promise.resolve(false) });
        renderLoginForm();
 diff --git a/frontend/src/pages/Channels.jsx b/frontend/src/pages/Channels.jsx
-index edb6ad4..91b6897 100644
+index edb6ad4..b44d900 100644
 --- a/frontend/src/pages/Channels.jsx
 +++ b/frontend/src/pages/Channels.jsx
 @@ -8,6 +8,8 @@ import useAuthStore from '../store/auth';
@@ -712,20 +850,22 @@ index edb6ad4..91b6897 100644
  
  const PageContent = () => {
    const authUser = useAuthStore((s) => s.user);
-@@ -101,9 +103,10 @@ const PageContent = () => {
+@@ -100,10 +102,11 @@ const PageContent = () => {
+   );
  };
  
- const ChannelsPage = () => {
+-const ChannelsPage = () => {
++const ChannelsPage = ({ management = false }) => {
 +  const isMobile = useMediaQuery('(max-width: 900px)');
    return (
      <ErrorBoundary inline>
 -      <PageContent />
-+      {isMobile ? <MobileChannels /> : <PageContent />}
++      {isMobile && !management ? <MobileChannels /> : <PageContent />}
      </ErrorBoundary>
    );
  };
 diff --git a/frontend/src/store/__tests__/auth.test.jsx b/frontend/src/store/__tests__/auth.test.jsx
-index 50f14e4..8907c14 100644
+index 50f14e4..4985ffd 100644
 --- a/frontend/src/store/__tests__/auth.test.jsx
 +++ b/frontend/src/store/__tests__/auth.test.jsx
 @@ -186,7 +186,8 @@ describe('useAuthStore', () => {
@@ -738,7 +878,32 @@ index 50f14e4..8907c14 100644
        });
  
        expect(API.login).toHaveBeenCalledWith('testuser', 'wrong');
-@@ -540,16 +541,16 @@ describe('useAuthStore', () => {
+@@ -299,8 +300,16 @@ describe('useAuthStore', () => {
+   });
+ 
+   describe('logout', () => {
++    it('enters guest mode without calling a protected logout endpoint', async () => {
++      await act(async () => { await useAuthStore.getState().logout(); });
++      expect(API.logout).not.toHaveBeenCalled();
++      expect(useAuthStore.getState().isCheckingAuth).toBe(false);
++      expect(useAuthStore.getState().isAuthenticated).toBe(false);
++    });
++
+     it('should clear tokens and call logout API', async () => {
+       API.logout.mockResolvedValue();
++      useAuthStore.setState({ isAuthenticated: true, accessToken: 'session-token' });
+ 
+       const { result } = renderHook(() => useAuthStore());
+ 
+@@ -320,6 +329,7 @@ describe('useAuthStore', () => {
+ 
+     it('should continue logout even if API call fails', async () => {
+       API.logout.mockRejectedValue(new Error('API error'));
++      useAuthStore.setState({ isAuthenticated: true, accessToken: 'session-token' });
+ 
+       const { result } = renderHook(() => useAuthStore());
+ 
+@@ -540,16 +550,16 @@ describe('useAuthStore', () => {
    });
  
    describe('login edge cases', () => {
@@ -759,7 +924,7 @@ index 50f14e4..8907c14 100644
  
        expect(result.current.accessToken).toBeNull();
 diff --git a/frontend/src/store/auth.jsx b/frontend/src/store/auth.jsx
-index 75a73e7..8d31738 100644
+index 75a73e7..eb6966a 100644
 --- a/frontend/src/store/auth.jsx
 +++ b/frontend/src/store/auth.jsx
 @@ -190,17 +190,13 @@ const useAuthStore = create((set, get) => ({
@@ -786,3 +951,78 @@ index 75a73e7..8d31738 100644
    },
  
    proxyLogin: async () => {
+@@ -237,24 +233,26 @@ const useAuthStore = create((set, get) => ({
+       return false;
+     } catch (error) {
+       console.error('Token refresh failed:', error);
+-      await get().logout();
++      await get().logout({ notifyServer: false });
+       return false;
+     }
+   },
+ 
+   // Opting out lasts until the page is reloaded: an explicit logout should show
+   // the login form, but a later visit signs in through the proxy again.
+-  logout: async ({ explicit = false } = {}) => {
++  logout: async ({ explicit = false, notifyServer = true } = {}) => {
+     if (explicit) {
+       set({ proxyAuthOptOut: true });
+     }
+ 
+     // Call backend logout endpoint to log the event
+-    try {
+-      await API.logout();
+-    } catch (error) {
+-      // Continue with logout even if API call fails
+-      console.error('Logout API call failed:', error);
++    if (notifyServer && (get().isAuthenticated || get().accessToken)) {
++      try {
++        await API.logout();
++      } catch (error) {
++        // Continue with logout even if API call fails
++        console.error('Logout API call failed:', error);
++      }
+     }
+ 
+     set({
+diff --git a/frontend/src/utils/components/FloatingVideoUtils.js b/frontend/src/utils/components/FloatingVideoUtils.js
+index bd4d4aa..3491478 100644
+--- a/frontend/src/utils/components/FloatingVideoUtils.js
++++ b/frontend/src/utils/components/FloatingVideoUtils.js
+@@ -7,13 +7,13 @@ export const PLAYER_PREFS_KEY = 'dispatcharr-player-prefs';
+  * exact value, for Standard/Admin on /proxy/ts/stream/. Ignored for XC
+  * requests and Streamer accounts.
+  */
+-export const buildLiveStreamUrl = (path) => {
++export const buildLiveStreamUrl = (path, { useSavedProfile = true } = {}) => {
+   const prefs = getPlayerPrefs();
+   const params = new URLSearchParams({
+     output_format: 'mpegts',
+     skip_redirect: 'true',
+   });
+-  const profileId = prefs.webPlayerOutputProfileId;
++  const profileId = useSavedProfile && prefs.webPlayerOutputProfileId;
+   if (profileId) params.set('output_profile', String(profileId));
+   return `${path}?${params.toString()}`;
+ };
+diff --git a/frontend/src/utils/components/__tests__/FloatingVideoUtils.test.js b/frontend/src/utils/components/__tests__/FloatingVideoUtils.test.js
+index dca2f71..d036f2a 100644
+--- a/frontend/src/utils/components/__tests__/FloatingVideoUtils.test.js
++++ b/frontend/src/utils/components/__tests__/FloatingVideoUtils.test.js
+@@ -8,9 +8,16 @@ import {
+   PLAYER_PREFS_KEY,
+   getPlayerPrefs,
+   savePlayerPrefs,
++  buildLiveStreamUrl,
+ } from '../FloatingVideoUtils';
+ 
+ describe('FloatingVideoUtils', () => {
++  it('does not reuse an administrator output preference for public viewing', () => {
++    localStorage.setItem(PLAYER_PREFS_KEY, JSON.stringify({ webPlayerOutputProfileId: 42 }));
++    expect(buildLiveStreamUrl('/proxy/ts/stream/channel')).toContain('output_profile=42');
++    expect(buildLiveStreamUrl('/proxy/ts/stream/channel', { useSavedProfile: false })).not.toContain('output_profile');
++    localStorage.removeItem(PLAYER_PREFS_KEY);
++  });
+   describe('getLivePlayerErrorMessage', () => {
+     it('should return formatted error for non-MediaError types', () => {
+       expect(

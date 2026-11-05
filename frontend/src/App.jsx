@@ -9,6 +9,7 @@ import {
 import Sidebar from './components/Sidebar';
 import Login, { LoginLoadingCard } from './pages/Login';
 import Channels from './pages/Channels';
+import PublicWatch from './pages/PublicWatch';
 import ContentSources from './pages/ContentSources';
 import Guide from './pages/Guide';
 import Stats from './pages/Stats';
@@ -41,6 +42,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { defaultRoute, getSafeNextPath } from './utils/loginRedirect';
 import 'allotment/dist/style.css';
 import './mobile.css';
+import { USER_LEVELS } from './constants';
 
 const drawerWidth = 240;
 const miniDrawerWidth = 60;
@@ -57,6 +59,7 @@ const App = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [open, setOpen] = useBrowserStorage('dispatcharr_sidebar_open', true);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const canManage = useAuthStore((s) => s.user?.user_level >= USER_LEVELS.ADMIN);
   const isInitialized = useAuthStore((s) => s.isInitialized);
   const authReady = isAuthenticated && isInitialized;
   const isCheckingAuth = useAuthStore((s) => s.isCheckingAuth);
@@ -146,7 +149,9 @@ const App = () => {
                   <Burger opened={mobileMenuOpen} onClick={() => setMobileMenuOpen((value) => !value)}
                     size="sm" aria-expanded={mobileMenuOpen} aria-label={mobileMenuOpen ? '关闭菜单' : '打开菜单'} />
                   <a href="/channels" className="mobile-brand">电视直播</a>
-                  <span className="mobile-topbar-label">Dispatcharr</span>
+                  {canManage
+                    ? <a href="/manage/channels" className="mobile-manage-link">管理频道</a>
+                    : <span className="mobile-topbar-label">Dispatcharr</span>}
                 </AppShell.Header>
               )}
               {isMobile && mobileMenuOpen && (
@@ -185,6 +190,7 @@ const App = () => {
                         {authReady ? (
                           <>
                             <Route path="/channels" element={<Channels />} />
+                            <Route path="/manage/channels" element={<Channels management />} />
                             <Route
                               path="/sources"
                               element={<ContentSources />}
@@ -209,7 +215,11 @@ const App = () => {
                             <Route path="/vods" element={<VODsPage />} />
                           </>
                         ) : (
-                          <Route path="/login" element={<Login />} />
+                          <>
+                            <Route path="/" element={<Navigate to="/channels" replace />} />
+                            <Route path="/channels" element={<PublicWatch />} />
+                            <Route path="/login" element={<Login />} />
+                          </>
                         )}
                         <Route
                           path="*"

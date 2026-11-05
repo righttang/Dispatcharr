@@ -2,10 +2,13 @@ from django.urls import path, include, re_path
 from drf_spectacular.views import SpectacularSwaggerView, SpectacularRedocView
 
 from apps.api.schema_views import LockedSpectacularAPIView
+from apps.channels import public_watch
 
 app_name = 'api'
 
 urlpatterns = [
+    path('watch/channels/', public_watch.channel_catalog, name='public-watch-channels'),
+    path('watch/sessions/<str:token>/', public_watch.destroy_anonymous_session, name='public-watch-session'),
     path('accounts/', include(('apps.accounts.api_urls', 'accounts'), namespace='accounts')),
     path('channels/', include(('apps.channels.api_urls', 'channels'), namespace='channels')),
     path('epg/', include(('apps.epg.api_urls', 'epg'), namespace='epg')),

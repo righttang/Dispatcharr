@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react';
 import MobileChannels from '../MobileChannels';
 
-const { showVideo, getChannels } = vi.hoisted(() => ({ showVideo: vi.fn(), getChannels: vi.fn() }));
-vi.mock('../../api', () => ({ default: { getChannelsForParams: getChannels } }));
+const { showVideo, getChannels, getPublicChannels } = vi.hoisted(() => ({ showVideo: vi.fn(), getChannels: vi.fn(), getPublicChannels: vi.fn() }));
+vi.mock('../../api', () => ({ default: { getChannelsForParams: getChannels, getPublicWatchChannels: getPublicChannels } }));
 vi.mock('../../store/channels', () => ({ default: (select) => select({
   channelGroups: { 1: { name: '新闻' } }, profiles: {}, selectedProfileId: '0',
 }) }));
@@ -22,6 +22,20 @@ describe('Mobile channel snapshots', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ channels: { 'channel-1': snapshot } }) }));
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+  it('loads the public catalog and plays without querying management endpoints', async () => {
+    getPublicChannels.mockResolvedValue({ enabled: true, groups: { 1: { name: '新闻' } }, channels: [{
+      id: 8, uuid: 'public-channel', name: '公开频道', channel_number: 8, channel_group_id: 1,
+      native_output_profile_id: 3,
+    }] });
+    render(<MobileChannels publicView />);
+    fireEvent.click(await screen.findByRole('button', { name: '播放 公开频道' }));
+    expect(getChannels).not.toHaveBeenCalled();
+    expect(showVideo).toHaveBeenCalledWith(expect.stringContaining('/proxy/ts/stream/public-channel'), 'live', {
+      name: '公开频道', channelId: 8, streamProfileId: undefined, publicView: true, nativeOutputProfileId: 3,
+    });
+    expect(screen.getByRole('button', { name: '新闻' })).toBeInTheDocument();
+  });
 
   it('shows the cached frame and time and plays when the picture is tapped', async () => {
     const { container } = render(<MobileChannels />);

@@ -27,15 +27,17 @@ function ChannelSnapshot({ snapshot }) {
   </span>;
 }
 
-export default function MobileChannels() {
+export default function MobileChannels({ publicView = false }) {
   const [channels, setChannels] = useState([]);
+  const [publicGroups, setPublicGroups] = useState({});
   const [snapshots, setSnapshots] = useState({});
   const [snapshotRefresh, setSnapshotRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [group, setGroup] = useState('all');
-  const groups = useChannelsStore((state) => state.channelGroups);
+  const savedGroups = useChannelsStore((state) => state.channelGroups);
+  const groups = publicView ? publicGroups : savedGroups;
   const selectedProfileId = useChannelsStore((state) => state.selectedProfileId);
   const profiles = useChannelsStore((state) => state.profiles);
   const showVideo = useVideoStore((state) => state.showVideo);
@@ -47,14 +49,24 @@ export default function MobileChannels() {
     setLoading(true);
     setError('');
     try {
-      const rows = await API.getChannelsForParams(new URLSearchParams({ ordering: 'channel_number' }));
-      setChannels(rows);
+      if (publicView) {
+        const catalog = await API.getPublicWatchChannels();
+        if (!catalog.enabled) {
+          setError('请登录后观看频道。');
+          return;
+        }
+        setChannels(catalog.channels);
+        setPublicGroups(catalog.groups);
+      } else {
+        const rows = await API.getChannelsForParams(new URLSearchParams({ ordering: 'channel_number' }));
+        setChannels(rows);
+      }
     } catch {
       setError('频道暂时没有加载成功，请重试。');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [publicView]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -93,10 +105,10 @@ export default function MobileChannels() {
   const available = useMemo(() => {
     const profile = profiles[selectedProfileId];
     return channels.filter((channel) => !channel.hidden_from_output && (
-      !selectedProfileId || String(selectedProfileId) === '0' || !profile || profile.channels.has(channel.id)
+      publicView || !selectedProfileId || String(selectedProfileId) === '0' || !profile || profile.channels.has(channel.id)
     )).sort((a, b) => (channelNumber(a) ?? Infinity) - (channelNumber(b) ?? Infinity)
       || channelName(a).localeCompare(channelName(b)));
-  }, [channels, selectedProfileId, profiles]);
+  }, [channels, selectedProfileId, profiles, publicView]);
 
   const categories = useMemo(() => {
     const found = new Map();
@@ -115,10 +127,11 @@ export default function MobileChannels() {
   const hasPlayer = isPlaying && contentType === 'live';
 
   const watch = (channel) => {
-    const path = buildLiveStreamUrl(`/proxy/ts/stream/${channel.uuid}`);
+    const path = buildLiveStreamUrl(`/proxy/ts/stream/${channel.uuid}`, { useSavedProfile: !publicView });
     showVideo(`${window.location.origin}${path}`, 'live', {
       name: channelName(channel), channelId: channel.id,
       streamProfileId: channel.effective_stream_profile_id ?? channel.stream_profile_id,
+      ...(publicView ? { publicView: true, nativeOutputProfileId: channel.native_output_profile_id } : {}),
     });
   };
 

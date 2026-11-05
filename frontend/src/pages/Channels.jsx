@@ -102,11 +102,11 @@ const PageContent = () => {
   );
 };
 
-const ChannelsPage = () => {
+const ChannelsPage = ({ management = false }) => {
   const isMobile = useMediaQuery('(max-width: 900px)');
   return (
     <ErrorBoundary inline>
-      {isMobile ? <MobileChannels /> : <PageContent />}
+      {isMobile && !management ? <MobileChannels /> : <PageContent />}
     </ErrorBoundary>
   );
 };

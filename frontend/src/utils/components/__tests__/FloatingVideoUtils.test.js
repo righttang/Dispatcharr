@@ -8,9 +8,16 @@ import {
   PLAYER_PREFS_KEY,
   getPlayerPrefs,
   savePlayerPrefs,
+  buildLiveStreamUrl,
 } from '../FloatingVideoUtils';
 
 describe('FloatingVideoUtils', () => {
+  it('does not reuse an administrator output preference for public viewing', () => {
+    localStorage.setItem(PLAYER_PREFS_KEY, JSON.stringify({ webPlayerOutputProfileId: 42 }));
+    expect(buildLiveStreamUrl('/proxy/ts/stream/channel')).toContain('output_profile=42');
+    expect(buildLiveStreamUrl('/proxy/ts/stream/channel', { useSavedProfile: false })).not.toContain('output_profile');
+    localStorage.removeItem(PLAYER_PREFS_KEY);
+  });
   describe('getLivePlayerErrorMessage', () => {
     it('should return formatted error for non-MediaError types', () => {
       expect(

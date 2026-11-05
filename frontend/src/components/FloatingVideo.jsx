@@ -481,9 +481,10 @@ export default function FloatingVideo() {
       if (supportsNativeAirPlay(videoRef.current)) {
         const player = createNativeLivePlayer({
           video: videoRef.current,
-          url: buildNativeHlsUrl(streamUrl, window.location.origin, airPlayOutputProfile(
-            metadata, useOutputProfilesStore.getState().profiles, useStreamProfilesStore.getState().profiles
-          )),
+          url: buildNativeHlsUrl(streamUrl, window.location.origin, metadata?.publicView
+            ? metadata.nativeOutputProfileId
+            : airPlayOutputProfile(metadata, useOutputProfilesStore.getState().profiles, useStreamProfilesStore.getState().profiles)),
+          anonymous: Boolean(metadata?.publicView),
           getToken: () => useAuthStore.getState().getToken(),
           onReady: () => {
             if (playerRef.current !== player) return;
@@ -531,7 +532,7 @@ export default function FloatingVideo() {
       // is baked into the IO loader for the life of the player; we just want
       // to be sure we use the freshest token available at the moment of
       // connection rather than whatever React-render snapshot we closed over.
-      const liveAccessToken = useAuthStore.getState().accessToken;
+      const liveAccessToken = metadata?.publicView ? null : useAuthStore.getState().accessToken;
 
       const player = mpegts.createPlayer(
         {

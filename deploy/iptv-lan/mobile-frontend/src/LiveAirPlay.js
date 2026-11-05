@@ -33,7 +33,7 @@ const sessionFromUrl = (url, origin) => {
   return { url: parsed.href, token: match[1] };
 };
 
-export function createNativeLivePlayer({ video, url, getToken, onReady, onPlaying, onError, fetcher = fetch }) {
+export function createNativeLivePlayer({ video, url, getToken, anonymous = false, onReady, onPlaying, onError, fetcher = fetch }) {
   const controller = new AbortController();
   let destroyed = false;
   let session;
@@ -46,8 +46,9 @@ export function createNativeLivePlayer({ video, url, getToken, onReady, onPlayin
     if (!session || released) return;
     released = true;
     // This stops only this viewer's session, including a TV using its URL.
-    void fetcher(`${origin}/api/proxy/hls/sessions/${session.token}/`, {
-      method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` }, keepalive: true,
+    const endpoint = anonymous ? '/api/watch/sessions/' : '/api/proxy/hls/sessions/';
+    void fetcher(`${origin}${endpoint}${session.token}/`, {
+      method: 'DELETE', headers: anonymous ? undefined : { Authorization: `Bearer ${accessToken}` }, keepalive: true,
     }).catch(() => {});
   };
   const play = () => {
@@ -73,12 +74,18 @@ export function createNativeLivePlayer({ video, url, getToken, onReady, onPlayin
     play,
     async start() {
       try {
-        accessToken = await getToken();
+        accessToken = anonymous ? null : await getToken();
         if (destroyed) return;
-        if (!accessToken) throw new Error('Login expired');
-        const response = await fetcher(url, {
-          headers: { Authorization: `Bearer ${accessToken}` }, signal: controller.signal,
-        });
+        if (!anonymous && !accessToken) throw new Error('Login expired');
+        let response;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          response = await fetcher(url, {
+            headers: anonymous ? undefined : { Authorization: `Bearer ${accessToken}` }, signal: controller.signal,
+          });
+          if (response.ok || !(response.status >= 500 && response.status < 600) || attempt === 2) break;
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          if (destroyed) return;
+        }
         if (!response.ok) throw new Error(`HLS bootstrap failed (${response.status})`);
         session = sessionFromUrl(response.url, origin);
         if (destroyed) { release(); return; }

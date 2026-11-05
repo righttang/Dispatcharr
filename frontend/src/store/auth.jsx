@@ -233,24 +233,26 @@ const useAuthStore = create((set, get) => ({
       return false;
     } catch (error) {
       console.error('Token refresh failed:', error);
-      await get().logout();
+      await get().logout({ notifyServer: false });
       return false;
     }
   },
 
   // Opting out lasts until the page is reloaded: an explicit logout should show
   // the login form, but a later visit signs in through the proxy again.
-  logout: async ({ explicit = false } = {}) => {
+  logout: async ({ explicit = false, notifyServer = true } = {}) => {
     if (explicit) {
       set({ proxyAuthOptOut: true });
     }
 
     // Call backend logout endpoint to log the event
-    try {
-      await API.logout();
-    } catch (error) {
-      // Continue with logout even if API call fails
-      console.error('Logout API call failed:', error);
+    if (notifyServer && (get().isAuthenticated || get().accessToken)) {
+      try {
+        await API.logout();
+      } catch (error) {
+        // Continue with logout even if API call fails
+        console.error('Logout API call failed:', error);
+      }
     }
 
     set({
