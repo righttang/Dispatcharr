@@ -190,17 +190,13 @@ const useAuthStore = create((set, get) => ({
 
   // Action to login
   login: async ({ username, password }) => {
-    try {
-      const response = await API.login(username, password);
-      if (response.access) {
-        set({ proxyAuthOptOut: false });
-        storeTokens(set, response);
-
-        // Don't start background loading here - let it happen after app initialization
-      }
-    } catch (error) {
-      console.error('Login failed:', error);
+    const response = await API.login(username, password);
+    if (!response?.access) {
+      throw new Error('Login response did not include an access token');
     }
+    set({ proxyAuthOptOut: false });
+    storeTokens(set, response);
+    return response;
   },
 
   proxyLogin: async () => {

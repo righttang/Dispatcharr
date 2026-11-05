@@ -1,0 +1,788 @@
+diff --git a/apps/proxy/live_proxy/output/hls/views.py b/apps/proxy/live_proxy/output/hls/views.py
+index c7fc16a..cdf9fda 100644
+--- a/apps/proxy/live_proxy/output/hls/views.py
++++ b/apps/proxy/live_proxy/output/hls/views.py
+@@ -50,6 +50,7 @@ from ...server import ProxyServer
+ from ...services.channel_service import ChannelService
+ from ...utils import get_logger
+ from .segmenter import render_media_playlist
++from .http_range import segment_response
+ from .session import (
+     claim_abandoned_session,
+     enter_cold_start,
+@@ -187,7 +188,7 @@ class _StalePlaylist(Exception):
+     """The playlist descriptor stopped advancing (see _playlist_is_stale)."""
+ 
+ 
+-def _render_playlist_text(playlist_json):
++def _render_playlist_text(playlist_json, native=False):
+     """Render playlist JSON to m3u8 text.
+ 
+     Raises _StalePlaylist for a descriptor nothing is advancing any more, and
+@@ -201,12 +202,12 @@ def _render_playlist_text(playlist_json):
+         state.get("target", 4),
+         adv_target=state.get("adv_target"),
+         disc_sequence=state.get("disc_seq", 0),
+-        start_behind_seconds=state.get("start_behind"),
++        start_behind_seconds=None if native else state.get("start_behind"),
+     )
+ 
+ 
+ def _cold_start_playlist_chunks(redis_client, token, channel_id, client_id, fmt,
+-                                init_grace):
++                                init_grace, native=False):
+     """Yield a chunked first playlist: comments while waiting, then the real body.
+ 
+     Sent only when Redis has no playlist yet. Finishes with the rendered
+@@ -249,7 +250,7 @@ def _cold_start_playlist_chunks(redis_client, token, channel_id, client_id, fmt,
+ 
+             if playlist_json:
+                 try:
+-                    body = _render_playlist_text(playlist_json)
++                    body = _render_playlist_text(playlist_json, native=native)
+                 except (_StalePlaylist, TypeError, ValueError, KeyError) as e:
+                     logger.error(
+                         f"[{client_id}] HLS cold-start got unusable playlist "
+@@ -382,7 +383,7 @@ def _stop_abandoned_cold_start(redis_client, token, channel_id, client_id, fmt,
+         )
+ 
+ 
+-def _serve_hls_playlist(token):
++def _serve_hls_playlist(token, native=False):
+     """Build the rolling live media playlist response for one capability URL."""
+     proxy_server = ProxyServer.get_instance()
+     redis_client = proxy_server.redis_client
+@@ -399,7 +400,7 @@ def _serve_hls_playlist(token):
+     playlist_json = redis_client.get(RedisKeys.output_playlist(channel_id, fmt))
+     if playlist_json:
+         try:
+-            body = _render_playlist_text(playlist_json)
++            body = _render_playlist_text(playlist_json, native=native)
+         except _StalePlaylist:
+             # Temporary unavailability of a live playlist update: 404 so
+             # clients retry, rather than 410 Gone for a permanent end.
+@@ -433,6 +434,7 @@ def _serve_hls_playlist(token):
+             client_id,
+             fmt,
+             float(ConfigHelper.channel_init_grace_period()),
++            native=native,
+         ),
+         content_type="application/vnd.apple.mpegurl",
+     )
+@@ -440,7 +442,7 @@ def _serve_hls_playlist(token):
+     return response
+ 
+ 
+-def _serve_hls_segment(token, seq):
++def _serve_hls_segment(token, seq, request=None):
+     """Fetch one media segment by sequence number for a capability URL."""
+     proxy_server = ProxyServer.get_instance()
+     redis_client = proxy_server.redis_client
+@@ -462,8 +464,10 @@ def _serve_hls_segment(token, seq):
+         # Expired out of the rolling window (player fell too far behind).
+         return JsonResponse({"error": "Segment expired"}, status=404)
+ 
+-    response = HttpResponse(data, content_type="video/mp2t")
+-    response["Cache-Control"] = "no-cache"
++    headers = request.headers if request is not None else {}
++    response = segment_response(data, headers.get('Range', ''), headers.get('If-Range', ''))
++    if request is not None and request.method == 'HEAD':
++        response.content = b''
+     return response
+ 
+ 
+@@ -472,19 +476,19 @@ def _serve_hls_segment(token, seq):
+ def hls_playlist(request, token):
+     """Rolling live media playlist for one HLS capability URL."""
+     try:
+-        return _serve_hls_playlist(token)
++        return _serve_hls_playlist(token, native=request.GET.get('native') == '1')
+     finally:
+         # Cold-start may read settings (ORM-capable); this endpoint is polled
+         # every few seconds per client, so release stale connections promptly.
+         close_old_connections()
+ 
+ 
+-@api_view(["GET"])
++@api_view(["GET", "HEAD"])
+ @permission_classes([AllowAny])
+ def hls_segment(request, token, seq):
+     """One HLS media segment for an opaque capability URL."""
+     try:
+-        return _serve_hls_segment(token, seq)
++        return _serve_hls_segment(token, seq, request)
+     finally:
+         # Keep parity with playlist: release any borrowed connections promptly.
+         close_old_connections()
+diff --git a/frontend/src/App.jsx b/frontend/src/App.jsx
+index 1dbeb04..b16f708 100644
+--- a/frontend/src/App.jsx
++++ b/frontend/src/App.jsx
+@@ -1,4 +1,4 @@
+-import React, { useEffect, useRef } from 'react';
++import React, { useEffect, useRef, useState } from 'react';
+ import {
+   BrowserRouter as Router,
+   Route,
+@@ -26,7 +26,8 @@ import useAuthStore from './store/auth';
+ import useBrowserStorage from './hooks/useBrowserStorage';
+ import FloatingVideo from './components/FloatingVideo';
+ import { WebsocketProvider } from './WebSocket';
+-import { Box, AppShell, MantineProvider } from '@mantine/core';
++import { Box, AppShell, Burger, MantineProvider } from '@mantine/core';
++import { useMediaQuery } from '@mantine/hooks';
+ import '@mantine/core/styles.css'; // Ensure Mantine global styles load
+ import '@mantine/notifications/styles.css';
+ import '@mantine/dropzone/styles.css';
+@@ -39,6 +40,7 @@ import M3URefreshNotification from './components/M3URefreshNotification';
+ import ErrorBoundary from './components/ErrorBoundary';
+ import { defaultRoute, getSafeNextPath } from './utils/loginRedirect';
+ import 'allotment/dist/style.css';
++import './mobile.css';
+ 
+ const drawerWidth = 240;
+ const miniDrawerWidth = 60;
+@@ -51,6 +53,8 @@ const LoginRedirect = () => {
+ };
+ 
+ const App = () => {
++  const isMobile = useMediaQuery('(max-width: 900px)');
++  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+   const [open, setOpen] = useBrowserStorage('dispatcharr_sidebar_open', true);
+   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+   const isInitialized = useAuthStore((s) => s.isInitialized);
+@@ -127,20 +131,39 @@ const App = () => {
+         <WebsocketProvider>
+           <Router>
+             <AppShell
++              className={isMobile ? 'mobile-appshell' : undefined}
+               header={{
+-                height: 0,
++                height: isMobile && authReady ? 56 : 0,
+               }}
+               navbar={{
+                 width: authReady ? (open ? drawerWidth : miniDrawerWidth) : 0,
++                breakpoint: 900,
++                collapsed: { mobile: !mobileMenuOpen },
+               }}
+             >
++              {isMobile && authReady && (
++                <AppShell.Header className="mobile-topbar">
++                  <Burger opened={mobileMenuOpen} onClick={() => setMobileMenuOpen((value) => !value)}
++                    size="sm" aria-expanded={mobileMenuOpen} aria-label={mobileMenuOpen ? '关闭菜单' : '打开菜单'} />
++                  <a href="/channels" className="mobile-brand">电视直播</a>
++                  <span className="mobile-topbar-label">Dispatcharr</span>
++                </AppShell.Header>
++              )}
++              {isMobile && mobileMenuOpen && (
++                <button type="button" className="mobile-nav-backdrop" aria-label="关闭导航菜单"
++                  onClick={() => setMobileMenuOpen(false)} />
++              )}
+               {authReady && (
++                <div onClick={(event) => {
++                  if (isMobile && event.target.closest('a[href]')) setMobileMenuOpen(false);
++                }}>
+                 <Sidebar
+                   drawerWidth={drawerWidth}
+                   miniDrawerWidth={miniDrawerWidth}
+-                  collapsed={!open}
+-                  toggleDrawer={toggleDrawer}
++                  collapsed={isMobile ? false : !open}
++                  toggleDrawer={isMobile ? () => setMobileMenuOpen(false) : toggleDrawer}
+                 />
++                </div>
+               )}
+ 
+               <AppShell.Main>
+@@ -150,11 +173,11 @@ const App = () => {
+                     flexDirection: 'column',
+                     // transition: 'margin-left 0.3s',
+                     backgroundColor: '#18181b',
+-                    height: '100vh',
++                    height: isMobile && authReady ? 'calc(100dvh - 56px)' : '100vh',
+                     color: 'white',
+                   }}
+                 >
+-                  <Box sx={{ p: 2, flex: 1, overflow: 'auto' }}>
++                  <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+                     {isCheckingAuth ? (
+                       <LoginLoadingCard />
+                     ) : (
+diff --git a/frontend/src/components/FloatingVideo.jsx b/frontend/src/components/FloatingVideo.jsx
+index f7cf37b..33c6b3f 100644
+--- a/frontend/src/components/FloatingVideo.jsx
++++ b/frontend/src/components/FloatingVideo.jsx
+@@ -3,9 +3,14 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
+ import Draggable from 'react-draggable';
+ import useVideoStore from '../store/useVideoStore';
+ import useAuthStore from '../store/auth';
++import useOutputProfilesStore from '../store/outputProfiles';
++import useStreamProfilesStore from '../store/streamProfiles';
+ import mpegts from 'mpegts.js';
+ import Hls from 'hls.js';
++import { Airplay } from 'lucide-react';
++import { airPlayOutputProfile, buildNativeHlsUrl, createNativeLivePlayer, supportsNativeAirPlay } from '../utils/components/LiveAirPlay';
+ import { CloseButton, Flex, Loader, Text, Box } from '@mantine/core';
++import { useMediaQuery } from '@mantine/hooks';
+ import {
+   applyConstraints,
+   calculateNewDimensions,
+@@ -128,6 +133,7 @@ const ResizeHandles = ({ startResize }) => {
+ };
+ 
+ export default function FloatingVideo() {
++  const isMobile = useMediaQuery('(max-width: 900px)');
+   const isVisible = useVideoStore((s) => s.isVisible);
+   const streamUrl = useVideoStore((s) => s.streamUrl);
+   const contentType = useVideoStore((s) => s.contentType);
+@@ -136,6 +142,7 @@ export default function FloatingVideo() {
+ 
+   const videoRef = useRef(null);
+   const playerRef = useRef(null);
++  const retiringNativeSessionRef = useRef(null);
+   const videoContainerRef = useRef(null);
+   const resizeStateRef = useRef(null);
+   const overlayTimeoutRef = useRef(null);
+@@ -153,6 +160,8 @@ export default function FloatingVideo() {
+   const [loadError, setLoadError] = useState(null);
+   const [showOverlay, setShowOverlay] = useState(false);
+   const [showControls, setShowControls] = useState(false);
++  const [canAirPlay, setCanAirPlay] = useState(false);
++  const [isAirPlaying, setIsAirPlaying] = useState(false);
+   const [videoSize, setVideoSize] = useState(() => {
+     const prefs = getPlayerPrefs();
+     const saved = prefs.size;
+@@ -187,25 +196,34 @@ export default function FloatingVideo() {
+   const LIVE_RECONNECT_MAX_DELAY_MS = 10000;
+ 
+   // Safely destroy the mpegts player to prevent errors
+-  const safeDestroyPlayer = () => {
++  const safeDestroyPlayer = ({ preserveNativeSource = false } = {}) => {
++    if (!preserveNativeSource) {
++      retiringNativeSessionRef.current?.();
++      retiringNativeSessionRef.current = null;
++    }
+     try {
+       if (playerRef.current) {
+         setIsLoading(false);
+         setLoadError(null);
+ 
+-        if (videoRef.current) {
++        const keepSource = preserveNativeSource && playerRef.current.nativeLive;
++        if (videoRef.current && !keepSource) {
+           videoRef.current.removeAttribute('src');
+           videoRef.current.load();
+         }
+ 
+         try {
+-          playerRef.current.pause();
++          if (!keepSource) playerRef.current.pause();
+         } catch (e) {
+           // Ignore pause errors
+         }
+ 
+         try {
+-          playerRef.current.destroy();
++          const release = playerRef.current.destroy({ keepSession: keepSource });
++          if (typeof release === 'function') {
++            retiringNativeSessionRef.current?.();
++            retiringNativeSessionRef.current = release;
++          }
+         } catch (error) {
+           if (
+             error.name !== 'AbortError' &&
+@@ -460,6 +478,38 @@ export default function FloatingVideo() {
+     setShowControls(false);
+ 
+     try {
++      if (supportsNativeAirPlay(videoRef.current)) {
++        const player = createNativeLivePlayer({
++          video: videoRef.current,
++          url: buildNativeHlsUrl(streamUrl, window.location.origin, airPlayOutputProfile(
++            metadata, useOutputProfilesStore.getState().profiles, useStreamProfilesStore.getState().profiles
++          )),
++          getToken: () => useAuthStore.getState().getToken(),
++          onReady: () => {
++            if (playerRef.current !== player) return;
++            retiringNativeSessionRef.current?.();
++            retiringNativeSessionRef.current = null;
++            setIsLoading(false);
++            setShowControls(true);
++          },
++          onPlaying: () => {
++            if (playerRef.current !== player) return;
++            setIsLoading(false);
++            setLoadError(null);
++          },
++          onError: (message) => {
++            if (playerRef.current !== player) return;
++            setIsLoading(false);
++            setLoadError(message);
++          },
++        });
++        playerRef.current = player;
++        const { volume, muted } = getPlayerPrefs();
++        if (typeof volume === 'number') videoRef.current.volume = volume;
++        if (typeof muted === 'boolean') videoRef.current.muted = muted;
++        void player.start();
++        return;
++      }
+       if (!mpegts.getFeatureList().mseLivePlayback) {
+         setIsLoading(false);
+         setLoadError(
+@@ -609,7 +659,7 @@ export default function FloatingVideo() {
+     }
+ 
+     // Clean up any existing player
+-    safeDestroyPlayer();
++    safeDestroyPlayer({ preserveNativeSource: true });
+     reconnectAttemptsRef.current = 0;
+ 
+     // Initialize the appropriate player based on content type
+@@ -627,10 +677,36 @@ export default function FloatingVideo() {
+ 
+     return () => {
+       video?.removeEventListener('volumechange', handleVolumeChange);
+-      safeDestroyPlayer();
++      safeDestroyPlayer({ preserveNativeSource: true });
+     };
+   }, [isVisible, streamUrl, contentType]);
+ 
++  useEffect(() => () => safeDestroyPlayer(), []);
++
++  useEffect(() => {
++    const video = videoRef.current;
++    setCanAirPlay(contentType === 'vod'
++      ? typeof video?.webkitShowPlaybackTargetPicker === 'function'
++      : supportsNativeAirPlay(video));
++    const update = () => setIsAirPlaying(Boolean(video?.webkitCurrentPlaybackTargetIsWireless));
++    update();
++    video?.addEventListener('webkitcurrentplaybacktargetiswirelesschanged', update);
++    return () => video?.removeEventListener('webkitcurrentplaybacktargetiswirelesschanged', update);
++  }, [isVisible, streamUrl, contentType]);
++
++  const handleAirPlay = () => {
++    const video = videoRef.current;
++    if (typeof video?.webkitShowPlaybackTargetPicker !== 'function') return;
++    setLoadError(null);
++    // Both calls stay inside the tap gesture required by Safari.
++    try {
++      void video.play()?.catch(() => {});
++      video.webkitShowPlaybackTargetPicker();
++    } catch {
++      setLoadError('暂时无法打开 AirPlay，请检查 Apple TV 已开启 AirPlay，并连接同一局域网。');
++    }
++  };
++
+   // Modified hideVideo handler to clean up player first
+   const handleClose = (e) => {
+     if (e) {
+@@ -982,7 +1058,7 @@ export default function FloatingVideo() {
+     <Draggable
+       nodeRef={videoContainerRef}
+       cancel=".floating-video-no-drag"
+-      disabled={isResizing}
++      disabled={isResizing || isMobile}
+       position={dragPosition || undefined}
+       defaultPosition={initialPositionRef.current || { x: 0, y: 0 }}
+       onStart={handleDragStart}
+@@ -991,6 +1067,7 @@ export default function FloatingVideo() {
+     >
+       <div
+         ref={videoContainerRef}
++        className="dispatcharr-video-player"
+         style={{
+           position: 'fixed',
+           top: 0,
+@@ -1034,6 +1111,18 @@ export default function FloatingVideo() {
+           ) : (
+             <Box style={{ flex: 1 }} />
+           )}
++          <button
++            type="button"
++            className="floating-video-no-drag airplay-button"
++            aria-label="投屏到 Apple TV"
++            aria-pressed={isAirPlaying}
++            disabled={!canAirPlay || isLoading}
++            title={canAirPlay ? '选择 Apple TV 或其他 AirPlay 设备' : '请在 iPhone、iPad 或 Mac 的 Safari 中使用 AirPlay'}
++            onClick={handleAirPlay}
++          >
++            <Airplay size={16} aria-hidden="true" />
++            <span>{isAirPlaying ? '正在投屏' : 'AirPlay'}</span>
++          </button>
+           <CloseButton
+             onClick={handleClose}
+             onTouchEnd={handleClose}
+@@ -1070,7 +1159,9 @@ export default function FloatingVideo() {
+           {/* Enhanced video element with better controls for VOD */}
+           <video
+             ref={videoRef}
+-            controls={showControls}
++            controls={isMobile || showControls}
++            playsInline
++            x-webkit-airplay="allow"
+             className="floating-video-no-drag"
+             style={{
+               width: '100%',
+@@ -1164,7 +1255,7 @@ export default function FloatingVideo() {
+           </Box>
+         )}
+ 
+-        <ResizeHandles startResize={startResize} />
++        {!isMobile && <ResizeHandles startResize={startResize} />}
+       </div>
+     </Draggable>
+   );
+diff --git a/frontend/src/components/__tests__/FloatingVideo.test.jsx b/frontend/src/components/__tests__/FloatingVideo.test.jsx
+index c52bc14..6978b3d 100644
+--- a/frontend/src/components/__tests__/FloatingVideo.test.jsx
++++ b/frontend/src/components/__tests__/FloatingVideo.test.jsx
+@@ -8,9 +8,12 @@ import {
+ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+ import FloatingVideo from '../FloatingVideo';
+ import useVideoStore from '../../store/useVideoStore';
++import useAuthStore from '../../store/auth';
+ 
+ // Mock the video store
+ vi.mock('../../store/useVideoStore');
++vi.mock('../../store/outputProfiles', () => ({ default: { getState: () => ({ profiles: [] }) } }));
++vi.mock('../../store/streamProfiles', () => ({ default: { getState: () => ({ profiles: [] }) } }));
+ 
+ // Mock mpegts.js
+ vi.mock('mpegts.js', () => ({
+@@ -890,6 +893,86 @@ describe('FloatingVideo', () => {
+     });
+   });
+ 
++  describe('Native live AirPlay', () => {
++    let state;
++    let picker;
++    let fetcher;
++    let canPlay;
++    const origin = window.location.origin;
++    const sessionUrl = `${origin}/proxy/hls/first-session/index.m3u8`;
++    const response = (url = sessionUrl) => ({ ok: true, url, text: async () => '#EXTM3U\n#EXTINF:4,\n1.ts\n' });
++
++    beforeEach(() => {
++      state = { isVisible: true, streamUrl: '/proxy/ts/stream/first?output_format=mpegts',
++        contentType: 'live', metadata: { name: 'Test channel' }, hideVideo: mockHideVideo };
++      useVideoStore.mockImplementation(selector => selector(state));
++      useAuthStore.getState.mockReturnValue({ accessToken: 'current-token', getToken: vi.fn().mockResolvedValue('current-token') });
++      canPlay = vi.spyOn(HTMLVideoElement.prototype, 'canPlayType').mockReturnValue('probably');
++      picker = vi.fn();
++      Object.defineProperty(HTMLVideoElement.prototype, 'webkitShowPlaybackTargetPicker', { configurable: true, value: picker });
++      fetcher = vi.fn().mockImplementation(async (url, options) => options?.method === 'DELETE'
++        ? { ok: true } : response());
++      vi.stubGlobal('fetch', fetcher);
++    });
++
++    afterEach(() => {
++      delete HTMLVideoElement.prototype.webkitShowPlaybackTargetPicker;
++      canPlay.mockRestore();
++      vi.unstubAllGlobals();
++    });
++
++    it('uses native HLS and opens the AirPlay picker on a direct tap', async () => {
++      const { container } = render(<FloatingVideo />);
++      const button = screen.getByRole('button', { name: '投屏到 Apple TV' });
++      await waitFor(() => expect(button).toBeEnabled());
++      expect(mpegts.createPlayer).not.toHaveBeenCalled();
++      expect(fetcher.mock.calls[0][0]).toContain('output_format=hls');
++      expect(container.querySelector('video').src).toBe(sessionUrl + '?native=1');
++      fireEvent.click(button);
++      expect(picker).toHaveBeenCalledOnce();
++      const video = container.querySelector('video');
++      Object.defineProperty(video, 'webkitCurrentPlaybackTargetIsWireless', { configurable: true, value: true });
++      fireEvent(video, new Event('webkitcurrentplaybacktargetiswirelesschanged'));
++      expect(button).toHaveAttribute('aria-pressed', 'true');
++      expect(button).toHaveTextContent('正在投屏');
++    });
++
++    it('keeps the video element and its source while preparing another channel', async () => {
++      const { container, rerender } = render(<FloatingVideo />);
++      const video = container.querySelector('video');
++      await waitFor(() => expect(video.src).toBe(sessionUrl + '?native=1'));
++      let complete;
++      fetcher.mockImplementation((url, options) => options?.method === 'DELETE'
++        ? Promise.resolve({ ok: true }) : new Promise(resolve => { complete = resolve; }));
++      state = { ...state, streamUrl: '/proxy/ts/stream/second?output_format=mpegts' };
++      rerender(<FloatingVideo />);
++      await waitFor(() => expect(complete).toBeTypeOf('function'));
++      expect(container.querySelector('video')).toBe(video);
++      expect(video.src).toBe(sessionUrl + '?native=1');
++      expect(video.pause).not.toHaveBeenCalled();
++      await act(async () => complete(response(`${origin}/proxy/hls/second-session/index.m3u8`)));
++      expect(video.src).toContain('/second-session/');
++      expect(fetcher.mock.calls.some(([url, options]) => url.includes('/first-session/') && options?.method === 'DELETE')).toBe(true);
++    });
++
++    it('stops only this HLS session when the player closes', async () => {
++      const { container } = render(<FloatingVideo />);
++      await waitFor(() => expect(container.querySelector('video').src).toBe(sessionUrl + '?native=1'));
++      fireEvent.click(screen.getByTestId('close-button'));
++      expect(container.querySelector('video').getAttribute('src')).toBeNull();
++      expect(fetcher.mock.calls.some(([url, options]) => url.endsWith('/sessions/first-session/') && options.method === 'DELETE')).toBe(true);
++    });
++
++    it('keeps the normal player and explains Safari when AirPlay is unsupported', () => {
++      delete HTMLVideoElement.prototype.webkitShowPlaybackTargetPicker;
++      render(<FloatingVideo />);
++      const button = screen.getByRole('button', { name: '投屏到 Apple TV' });
++      expect(button).toBeDisabled();
++      expect(button.title).toContain('Safari');
++      expect(mpegts.createPlayer).toHaveBeenCalledOnce();
++    });
++  });
++
+   describe('Resize functionality', () => {
+     beforeEach(() => {
+       useVideoStore.mockImplementation((selector) => {
+diff --git a/frontend/src/components/forms/LoginForm.jsx b/frontend/src/components/forms/LoginForm.jsx
+index 31e8fb4..fbe6df1 100644
+--- a/frontend/src/components/forms/LoginForm.jsx
++++ b/frontend/src/components/forms/LoginForm.jsx
+@@ -37,6 +37,7 @@ const LoginForm = () => {
+   const [savePassword, setSavePassword] = useState(false);
+   const [forgotPasswordOpened, setForgotPasswordOpened] = useState(false);
+   const [isLoading, setIsLoading] = useState(false);
++  const [loginError, setLoginError] = useState('');
+ 
+   // Simple base64 encoding/decoding for localStorage
+   // Note: This is obfuscation, not encryption. Use browser's password manager for real security.
+@@ -97,29 +98,35 @@ const LoginForm = () => {
+   }, [isAuthenticated, navigate, nextParam]);
+ 
+   const handleInputChange = (e) => {
+-    setFormData({
+-      ...formData,
+-      [e.target.name]: e.target.value,
+-    });
++    const { name, value } = e.target;
++    setFormData((previous) => ({ ...previous, [name]: value }));
+   };
+ 
+   const handleSubmit = async (e) => {
+     e.preventDefault();
++    // Password managers may fill inputs without firing React's change handler.
++    const fields = new FormData(e.currentTarget);
++    const credentials = {
++      username: String(fields.get('username') ?? '').trim(),
++      password: String(fields.get('password') ?? ''),
++    };
++    setFormData(credentials);
++    setLoginError('');
+     setIsLoading(true);
+ 
+     try {
+-      await login(formData);
++      await login(credentials);
+ 
+       // Save username if remember me is checked
+       if (rememberMe) {
+         localStorage.setItem(
+           'dispatcharr_remembered_username',
+-          formData.username
++          credentials.username
+         );
+ 
+         // Save password if save password is checked
+         if (savePassword) {
+-          const encoded = encodePassword(formData.password);
++          const encoded = encodePassword(credentials.password);
+           if (encoded) {
+             localStorage.setItem('dispatcharr_saved_password', encoded);
+           }
+@@ -135,6 +142,15 @@ const LoginForm = () => {
+       // Navigation will happen automatically via the useEffect or route protection
+     } catch (e) {
+       console.log(`Failed to login: ${e}`);
++      if (e?.status === 401) {
++        setLoginError('用户名或密码不正确，请清空密码框后重新输入，检查浏览器是否自动填入旧密码。');
++        localStorage.removeItem('dispatcharr_saved_password');
++        setSavePassword(false);
++      } else if (e?.status === 429) {
++        setLoginError('登录尝试过于频繁，请等待 1 分钟再试。');
++      } else {
++        setLoginError('登录失败，请检查输入或稍后重试。');
++      }
+       if (e?.message === 'Unauthorized') {
+         showNotification({
+           title: 'Web UI Access Denied',
+@@ -187,6 +203,9 @@ const LoginForm = () => {
+             <TextInput
+               label="Username"
+               name="username"
++              autoComplete="username"
++              autoCapitalize="none"
++              spellCheck={false}
+               value={formData.username}
+               onChange={handleInputChange}
+               required
+@@ -196,11 +215,14 @@ const LoginForm = () => {
+               label="Password"
+               type="password"
+               name="password"
++              autoComplete="current-password"
+               value={formData.password}
+               onChange={handleInputChange}
+               // required
+             />
+ 
++            {loginError && <Text role="alert" c="red" size="sm">{loginError}</Text>}
++
+             <Group justify="space-between" align="center">
+               <Group align="center" spacing="xs">
+                 <Checkbox
+diff --git a/frontend/src/components/forms/__tests__/LoginForm.test.jsx b/frontend/src/components/forms/__tests__/LoginForm.test.jsx
+index 1628715..c032a92 100644
+--- a/frontend/src/components/forms/__tests__/LoginForm.test.jsx
++++ b/frontend/src/components/forms/__tests__/LoginForm.test.jsx
+@@ -79,8 +79,8 @@ vi.mock('@mantine/core', async () => ({
+   ),
+   Center: ({ children }) => <div>{children}</div>,
+   Stack: ({ children }) => <div>{children}</div>,
+-  Text: ({ children, c, size }) => (
+-    <span data-color={c} data-size={size}>
++  Text: ({ children, c, size, role }) => (
++    <span data-color={c} data-size={size} role={role}>
+       {children}
+     </span>
+   ),
+@@ -258,6 +258,21 @@ describe('LoginForm', () => {
+   // ── Successful login ───────────────────────────────────────────────────────
+ 
+   describe('successful login', () => {
++    it('submits the visible autofilled values instead of saved React state', async () => {
++      localStorage.setItem('dispatcharr_remembered_username', 'old-user');
++      localStorage.setItem('dispatcharr_saved_password', btoa('old-password'));
++      const { mockLogin } = setupMocks();
++      renderLoginForm();
++      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
++      setter.call(getUsername(), ' admin ');
++      setter.call(getPassword(), ' new-password ');
++      fireEvent.submit(getUsername().form);
++      await waitFor(() => expect(mockLogin).toHaveBeenCalledWith({
++        username: 'admin', password: ' new-password ',
++      }));
++      expect(localStorage.getItem('dispatcharr_saved_password')).toBe(btoa(' new-password '));
++    });
++
+     it('calls login with username and password', async () => {
+       const { mockLogin } = setupMocks({ loginResult: Promise.resolve(true) });
+       renderLoginForm();
+@@ -340,6 +355,28 @@ describe('LoginForm', () => {
+   // ── Failed login ───────────────────────────────────────────────────────────
+ 
+   describe('failed login', () => {
++    it('shows invalid credentials, removes the saved password, and skips data loading', async () => {
++      localStorage.setItem('dispatcharr_remembered_username', 'admin');
++      localStorage.setItem('dispatcharr_saved_password', btoa('old-password'));
++      const { mockLogin, mockInitData } = setupMocks();
++      mockLogin.mockRejectedValue(Object.assign(new Error('Invalid credentials'), { status: 401 }));
++      renderLoginForm();
++      fireEvent.submit(getUsername().form);
++      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('用户名或密码不正确'));
++      expect(mockInitData).not.toHaveBeenCalled();
++      expect(localStorage.getItem('dispatcharr_saved_password')).toBeNull();
++      expect(screen.getByLabelText(/save password/i)).not.toBeChecked();
++    });
++
++    it('explains a login rate limit without loading account data', async () => {
++      const { mockLogin, mockInitData } = setupMocks();
++      mockLogin.mockRejectedValue(Object.assign(new Error('Too many requests'), { status: 429 }));
++      renderLoginForm();
++      fireEvent.submit(getUsername().form);
++      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('等待 1 分钟'));
++      expect(mockInitData).not.toHaveBeenCalled();
++    });
++
+     it('does not navigate when login fails', async () => {
+       setupMocks({ loginResult: Promise.resolve(false) });
+       renderLoginForm();
+diff --git a/frontend/src/pages/Channels.jsx b/frontend/src/pages/Channels.jsx
+index edb6ad4..91b6897 100644
+--- a/frontend/src/pages/Channels.jsx
++++ b/frontend/src/pages/Channels.jsx
+@@ -8,6 +8,8 @@ import useAuthStore from '../store/auth';
+ import useLogosStore from '../store/logos';
+ import useBrowserStorage from '../hooks/useBrowserStorage';
+ import ErrorBoundary from '../components/ErrorBoundary';
++import { useMediaQuery } from '@mantine/hooks';
++import MobileChannels from '../components/MobileChannels';
+ 
+ const PageContent = () => {
+   const authUser = useAuthStore((s) => s.user);
+@@ -101,9 +103,10 @@ const PageContent = () => {
+ };
+ 
+ const ChannelsPage = () => {
++  const isMobile = useMediaQuery('(max-width: 900px)');
+   return (
+     <ErrorBoundary inline>
+-      <PageContent />
++      {isMobile ? <MobileChannels /> : <PageContent />}
+     </ErrorBoundary>
+   );
+ };
+diff --git a/frontend/src/store/__tests__/auth.test.jsx b/frontend/src/store/__tests__/auth.test.jsx
+index 50f14e4..8907c14 100644
+--- a/frontend/src/store/__tests__/auth.test.jsx
++++ b/frontend/src/store/__tests__/auth.test.jsx
+@@ -186,7 +186,8 @@ describe('useAuthStore', () => {
+       const { result } = renderHook(() => useAuthStore());
+ 
+       await act(async () => {
+-        await result.current.login({ username: 'testuser', password: 'wrong' });
++        await expect(result.current.login({ username: 'testuser', password: 'wrong' }))
++          .rejects.toThrow('Invalid credentials');
+       });
+ 
+       expect(API.login).toHaveBeenCalledWith('testuser', 'wrong');
+@@ -540,16 +541,16 @@ describe('useAuthStore', () => {
+   });
+ 
+   describe('login edge cases', () => {
+-    it('should not update state if response has no access token', async () => {
++    it('should reject a missing access token without updating state', async () => {
+       API.login.mockResolvedValue({});
+ 
+       const { result } = renderHook(() => useAuthStore());
+ 
+       await act(async () => {
+-        await result.current.login({
++        await expect(result.current.login({
+           username: 'testuser',
+           password: 'password',
+-        });
++        })).rejects.toThrow('Login response did not include an access token');
+       });
+ 
+       expect(result.current.accessToken).toBeNull();
+diff --git a/frontend/src/store/auth.jsx b/frontend/src/store/auth.jsx
+index 75a73e7..8d31738 100644
+--- a/frontend/src/store/auth.jsx
++++ b/frontend/src/store/auth.jsx
+@@ -190,17 +190,13 @@ const useAuthStore = create((set, get) => ({
+ 
+   // Action to login
+   login: async ({ username, password }) => {
+-    try {
+-      const response = await API.login(username, password);
+-      if (response.access) {
+-        set({ proxyAuthOptOut: false });
+-        storeTokens(set, response);
+-
+-        // Don't start background loading here - let it happen after app initialization
+-      }
+-    } catch (error) {
+-      console.error('Login failed:', error);
++    const response = await API.login(username, password);
++    if (!response?.access) {
++      throw new Error('Login response did not include an access token');
+     }
++    set({ proxyAuthOptOut: false });
++    storeTokens(set, response);
++    return response;
+   },
+ 
+   proxyLogin: async () => {

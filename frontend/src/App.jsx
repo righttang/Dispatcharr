@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   BrowserRouter as Router,
   Route,
@@ -26,7 +26,8 @@ import useAuthStore from './store/auth';
 import useBrowserStorage from './hooks/useBrowserStorage';
 import FloatingVideo from './components/FloatingVideo';
 import { WebsocketProvider } from './WebSocket';
-import { Box, AppShell, MantineProvider } from '@mantine/core';
+import { Box, AppShell, Burger, MantineProvider } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
 import '@mantine/core/styles.css'; // Ensure Mantine global styles load
 import '@mantine/notifications/styles.css';
 import '@mantine/dropzone/styles.css';
@@ -39,6 +40,7 @@ import M3URefreshNotification from './components/M3URefreshNotification';
 import ErrorBoundary from './components/ErrorBoundary';
 import { defaultRoute, getSafeNextPath } from './utils/loginRedirect';
 import 'allotment/dist/style.css';
+import './mobile.css';
 
 const drawerWidth = 240;
 const miniDrawerWidth = 60;
@@ -51,6 +53,8 @@ const LoginRedirect = () => {
 };
 
 const App = () => {
+  const isMobile = useMediaQuery('(max-width: 900px)');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [open, setOpen] = useBrowserStorage('dispatcharr_sidebar_open', true);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const isInitialized = useAuthStore((s) => s.isInitialized);
@@ -127,20 +131,39 @@ const App = () => {
         <WebsocketProvider>
           <Router>
             <AppShell
+              className={isMobile ? 'mobile-appshell' : undefined}
               header={{
-                height: 0,
+                height: isMobile && authReady ? 56 : 0,
               }}
               navbar={{
                 width: authReady ? (open ? drawerWidth : miniDrawerWidth) : 0,
+                breakpoint: 900,
+                collapsed: { mobile: !mobileMenuOpen },
               }}
             >
+              {isMobile && authReady && (
+                <AppShell.Header className="mobile-topbar">
+                  <Burger opened={mobileMenuOpen} onClick={() => setMobileMenuOpen((value) => !value)}
+                    size="sm" aria-expanded={mobileMenuOpen} aria-label={mobileMenuOpen ? '关闭菜单' : '打开菜单'} />
+                  <a href="/channels" className="mobile-brand">电视直播</a>
+                  <span className="mobile-topbar-label">Dispatcharr</span>
+                </AppShell.Header>
+              )}
+              {isMobile && mobileMenuOpen && (
+                <button type="button" className="mobile-nav-backdrop" aria-label="关闭导航菜单"
+                  onClick={() => setMobileMenuOpen(false)} />
+              )}
               {authReady && (
+                <div onClick={(event) => {
+                  if (isMobile && event.target.closest('a[href]')) setMobileMenuOpen(false);
+                }}>
                 <Sidebar
                   drawerWidth={drawerWidth}
                   miniDrawerWidth={miniDrawerWidth}
-                  collapsed={!open}
-                  toggleDrawer={toggleDrawer}
+                  collapsed={isMobile ? false : !open}
+                  toggleDrawer={isMobile ? () => setMobileMenuOpen(false) : toggleDrawer}
                 />
+                </div>
               )}
 
               <AppShell.Main>
@@ -150,11 +173,11 @@ const App = () => {
                     flexDirection: 'column',
                     // transition: 'margin-left 0.3s',
                     backgroundColor: '#18181b',
-                    height: '100vh',
+                    height: isMobile && authReady ? 'calc(100dvh - 56px)' : '100vh',
                     color: 'white',
                   }}
                 >
-                  <Box sx={{ p: 2, flex: 1, overflow: 'auto' }}>
+                  <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
                     {isCheckingAuth ? (
                       <LoginLoadingCard />
                     ) : (

@@ -1,0 +1,16 @@
+{
+  "dispatcharr": {
+    "repository": "https://github.com/Dispatcharr/Dispatcharr",
+    "base_commit": "e71bd6cd50931e1381f85521b7f914c47f9528b7",
+    "version": "0.33.0",
+    "custom_source": "../.."
+  },
+  "iptv-api": {
+    "repository": "https://github.com/Guovin/iptv-api",
+    "commit": "6ea026fd8522e3755f7197a77e21218c2f6a7514",
+    "version": "3.1.0",
+    "source_modified": false,
+    "license": "AGPL-3.0",
+    "config_notes": "Channel template and alias/config inputs originate from IPTV-API; keep its license when redistributing."
+  }
+}

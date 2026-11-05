@@ -1,0 +1,10 @@
+.env
+dispatcharr/data/
+iptv-api/output/
+upstream/
+evidence/
+__pycache__/
+mobile-frontend/dist/
+thumbnails/
+thumbnail-state.json
+thumbnail-worker.lock

@@ -1,0 +1,30 @@
+ARG PYTHON_IMAGE=python@sha256:eb2c62658b8d51bff0acc408504b76521d02030de56a8a3c1e830083e89b89d2
+FROM ${PYTHON_IMAGE}
+ENV PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8 \
+    IPTV_API_PLAIN_OUTPUT=1 IPTV_API_SKIP_VERSION_CHECK=1 \
+    APP_WORKDIR=/iptv-api
+WORKDIR /iptv-api
+RUN apk upgrade --no-cache
+COPY upstream/iptv-api/Pipfile /tmp/Pipfile
+RUN python - <<'PY'
+import tomllib
+from pathlib import Path
+packages = tomllib.loads(Path('/tmp/Pipfile').read_text())['packages']
+requirements = [name + (value if isinstance(value, str) and value != '*' else '')
+                for name, value in packages.items()]
+Path('/tmp/requirements.txt').write_text('\n'.join(requirements) + '\n')
+PY
+RUN pip install --no-cache-dir -r /tmp/requirements.txt 'certifi>=2026.10.18' \
+    && pip check
+COPY upstream/iptv-api/main.py upstream/iptv-api/version.json ./
+COPY upstream/iptv-api/utils ./utils
+COPY upstream/iptv-api/updates ./updates
+COPY upstream/iptv-api/service ./service
+COPY upstream/iptv-api/locales ./locales
+COPY upstream/iptv-api/static ./static
+COPY upstream/iptv-api/config ./config
+COPY upstream/iptv-api/favicon.ico ./favicon.ico
+COPY start-iptv-api.py /usr/local/bin/start-iptv-api.py
+COPY run-updater.py provider_compat.py ./
+EXPOSE 8080
+ENTRYPOINT ["python", "/usr/local/bin/start-iptv-api.py"]

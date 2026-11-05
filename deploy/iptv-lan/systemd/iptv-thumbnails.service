@@ -1,0 +1,15 @@
+[Unit]
+Description=Refresh IPTV channel thumbnails after successful speed measurements
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/tangt4/serversetup/iptv
+ExecStart=/usr/bin/python3 /home/tangt4/serversetup/iptv/update-thumbnails.py
+Nice=10
+TimeoutStartSec=8min
+UMask=0022
+NoNewPrivileges=true
+PrivateTmp=true

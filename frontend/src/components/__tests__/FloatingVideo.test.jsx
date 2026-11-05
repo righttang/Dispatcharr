@@ -8,9 +8,12 @@ import {
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import FloatingVideo from '../FloatingVideo';
 import useVideoStore from '../../store/useVideoStore';
+import useAuthStore from '../../store/auth';
 
 // Mock the video store
 vi.mock('../../store/useVideoStore');
+vi.mock('../../store/outputProfiles', () => ({ default: { getState: () => ({ profiles: [] }) } }));
+vi.mock('../../store/streamProfiles', () => ({ default: { getState: () => ({ profiles: [] }) } }));
 
 // Mock mpegts.js
 vi.mock('mpegts.js', () => ({
@@ -887,6 +890,86 @@ describe('FloatingVideo', () => {
       rerender(<FloatingVideo />);
 
       expect(mockPlayer.destroy).toHaveBeenCalled();
+    });
+  });
+
+  describe('Native live AirPlay', () => {
+    let state;
+    let picker;
+    let fetcher;
+    let canPlay;
+    const origin = window.location.origin;
+    const sessionUrl = `${origin}/proxy/hls/first-session/index.m3u8`;
+    const response = (url = sessionUrl) => ({ ok: true, url, text: async () => '#EXTM3U\n#EXTINF:4,\n1.ts\n' });
+
+    beforeEach(() => {
+      state = { isVisible: true, streamUrl: '/proxy/ts/stream/first?output_format=mpegts',
+        contentType: 'live', metadata: { name: 'Test channel' }, hideVideo: mockHideVideo };
+      useVideoStore.mockImplementation(selector => selector(state));
+      useAuthStore.getState.mockReturnValue({ accessToken: 'current-token', getToken: vi.fn().mockResolvedValue('current-token') });
+      canPlay = vi.spyOn(HTMLVideoElement.prototype, 'canPlayType').mockReturnValue('probably');
+      picker = vi.fn();
+      Object.defineProperty(HTMLVideoElement.prototype, 'webkitShowPlaybackTargetPicker', { configurable: true, value: picker });
+      fetcher = vi.fn().mockImplementation(async (url, options) => options?.method === 'DELETE'
+        ? { ok: true } : response());
+      vi.stubGlobal('fetch', fetcher);
+    });
+
+    afterEach(() => {
+      delete HTMLVideoElement.prototype.webkitShowPlaybackTargetPicker;
+      canPlay.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
+    it('uses native HLS and opens the AirPlay picker on a direct tap', async () => {
+      const { container } = render(<FloatingVideo />);
+      const button = screen.getByRole('button', { name: '投屏到 Apple TV' });
+      await waitFor(() => expect(button).toBeEnabled());
+      expect(mpegts.createPlayer).not.toHaveBeenCalled();
+      expect(fetcher.mock.calls[0][0]).toContain('output_format=hls');
+      expect(container.querySelector('video').src).toBe(sessionUrl + '?native=1');
+      fireEvent.click(button);
+      expect(picker).toHaveBeenCalledOnce();
+      const video = container.querySelector('video');
+      Object.defineProperty(video, 'webkitCurrentPlaybackTargetIsWireless', { configurable: true, value: true });
+      fireEvent(video, new Event('webkitcurrentplaybacktargetiswirelesschanged'));
+      expect(button).toHaveAttribute('aria-pressed', 'true');
+      expect(button).toHaveTextContent('正在投屏');
+    });
+
+    it('keeps the video element and its source while preparing another channel', async () => {
+      const { container, rerender } = render(<FloatingVideo />);
+      const video = container.querySelector('video');
+      await waitFor(() => expect(video.src).toBe(sessionUrl + '?native=1'));
+      let complete;
+      fetcher.mockImplementation((url, options) => options?.method === 'DELETE'
+        ? Promise.resolve({ ok: true }) : new Promise(resolve => { complete = resolve; }));
+      state = { ...state, streamUrl: '/proxy/ts/stream/second?output_format=mpegts' };
+      rerender(<FloatingVideo />);
+      await waitFor(() => expect(complete).toBeTypeOf('function'));
+      expect(container.querySelector('video')).toBe(video);
+      expect(video.src).toBe(sessionUrl + '?native=1');
+      expect(video.pause).not.toHaveBeenCalled();
+      await act(async () => complete(response(`${origin}/proxy/hls/second-session/index.m3u8`)));
+      expect(video.src).toContain('/second-session/');
+      expect(fetcher.mock.calls.some(([url, options]) => url.includes('/first-session/') && options?.method === 'DELETE')).toBe(true);
+    });
+
+    it('stops only this HLS session when the player closes', async () => {
+      const { container } = render(<FloatingVideo />);
+      await waitFor(() => expect(container.querySelector('video').src).toBe(sessionUrl + '?native=1'));
+      fireEvent.click(screen.getByTestId('close-button'));
+      expect(container.querySelector('video').getAttribute('src')).toBeNull();
+      expect(fetcher.mock.calls.some(([url, options]) => url.endsWith('/sessions/first-session/') && options.method === 'DELETE')).toBe(true);
+    });
+
+    it('keeps the normal player and explains Safari when AirPlay is unsupported', () => {
+      delete HTMLVideoElement.prototype.webkitShowPlaybackTargetPicker;
+      render(<FloatingVideo />);
+      const button = screen.getByRole('button', { name: '投屏到 Apple TV' });
+      expect(button).toBeDisabled();
+      expect(button.title).toContain('Safari');
+      expect(mpegts.createPlayer).toHaveBeenCalledOnce();
     });
   });
 

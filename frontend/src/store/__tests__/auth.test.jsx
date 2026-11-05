@@ -186,7 +186,8 @@ describe('useAuthStore', () => {
       const { result } = renderHook(() => useAuthStore());
 
       await act(async () => {
-        await result.current.login({ username: 'testuser', password: 'wrong' });
+        await expect(result.current.login({ username: 'testuser', password: 'wrong' }))
+          .rejects.toThrow('Invalid credentials');
       });
 
       expect(API.login).toHaveBeenCalledWith('testuser', 'wrong');
@@ -540,16 +541,16 @@ describe('useAuthStore', () => {
   });
 
   describe('login edge cases', () => {
-    it('should not update state if response has no access token', async () => {
+    it('should reject a missing access token without updating state', async () => {
       API.login.mockResolvedValue({});
 
       const { result } = renderHook(() => useAuthStore());
 
       await act(async () => {
-        await result.current.login({
+        await expect(result.current.login({
           username: 'testuser',
           password: 'password',
-        });
+        })).rejects.toThrow('Login response did not include an access token');
       });
 
       expect(result.current.accessToken).toBeNull();

@@ -3,9 +3,14 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Draggable from 'react-draggable';
 import useVideoStore from '../store/useVideoStore';
 import useAuthStore from '../store/auth';
+import useOutputProfilesStore from '../store/outputProfiles';
+import useStreamProfilesStore from '../store/streamProfiles';
 import mpegts from 'mpegts.js';
 import Hls from 'hls.js';
+import { Airplay } from 'lucide-react';
+import { airPlayOutputProfile, buildNativeHlsUrl, createNativeLivePlayer, supportsNativeAirPlay } from '../utils/components/LiveAirPlay';
 import { CloseButton, Flex, Loader, Text, Box } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
 import {
   applyConstraints,
   calculateNewDimensions,
@@ -128,6 +133,7 @@ const ResizeHandles = ({ startResize }) => {
 };
 
 export default function FloatingVideo() {
+  const isMobile = useMediaQuery('(max-width: 900px)');
   const isVisible = useVideoStore((s) => s.isVisible);
   const streamUrl = useVideoStore((s) => s.streamUrl);
   const contentType = useVideoStore((s) => s.contentType);
@@ -136,6 +142,7 @@ export default function FloatingVideo() {
 
   const videoRef = useRef(null);
   const playerRef = useRef(null);
+  const retiringNativeSessionRef = useRef(null);
   const videoContainerRef = useRef(null);
   const resizeStateRef = useRef(null);
   const overlayTimeoutRef = useRef(null);
@@ -153,6 +160,8 @@ export default function FloatingVideo() {
   const [loadError, setLoadError] = useState(null);
   const [showOverlay, setShowOverlay] = useState(false);
   const [showControls, setShowControls] = useState(false);
+  const [canAirPlay, setCanAirPlay] = useState(false);
+  const [isAirPlaying, setIsAirPlaying] = useState(false);
   const [videoSize, setVideoSize] = useState(() => {
     const prefs = getPlayerPrefs();
     const saved = prefs.size;
@@ -187,25 +196,34 @@ export default function FloatingVideo() {
   const LIVE_RECONNECT_MAX_DELAY_MS = 10000;
 
   // Safely destroy the mpegts player to prevent errors
-  const safeDestroyPlayer = () => {
+  const safeDestroyPlayer = ({ preserveNativeSource = false } = {}) => {
+    if (!preserveNativeSource) {
+      retiringNativeSessionRef.current?.();
+      retiringNativeSessionRef.current = null;
+    }
     try {
       if (playerRef.current) {
         setIsLoading(false);
         setLoadError(null);
 
-        if (videoRef.current) {
+        const keepSource = preserveNativeSource && playerRef.current.nativeLive;
+        if (videoRef.current && !keepSource) {
           videoRef.current.removeAttribute('src');
           videoRef.current.load();
         }
 
         try {
-          playerRef.current.pause();
+          if (!keepSource) playerRef.current.pause();
         } catch (e) {
           // Ignore pause errors
         }
 
         try {
-          playerRef.current.destroy();
+          const release = playerRef.current.destroy({ keepSession: keepSource });
+          if (typeof release === 'function') {
+            retiringNativeSessionRef.current?.();
+            retiringNativeSessionRef.current = release;
+          }
         } catch (error) {
           if (
             error.name !== 'AbortError' &&
@@ -460,6 +478,38 @@ export default function FloatingVideo() {
     setShowControls(false);
 
     try {
+      if (supportsNativeAirPlay(videoRef.current)) {
+        const player = createNativeLivePlayer({
+          video: videoRef.current,
+          url: buildNativeHlsUrl(streamUrl, window.location.origin, airPlayOutputProfile(
+            metadata, useOutputProfilesStore.getState().profiles, useStreamProfilesStore.getState().profiles
+          )),
+          getToken: () => useAuthStore.getState().getToken(),
+          onReady: () => {
+            if (playerRef.current !== player) return;
+            retiringNativeSessionRef.current?.();
+            retiringNativeSessionRef.current = null;
+            setIsLoading(false);
+            setShowControls(true);
+          },
+          onPlaying: () => {
+            if (playerRef.current !== player) return;
+            setIsLoading(false);
+            setLoadError(null);
+          },
+          onError: (message) => {
+            if (playerRef.current !== player) return;
+            setIsLoading(false);
+            setLoadError(message);
+          },
+        });
+        playerRef.current = player;
+        const { volume, muted } = getPlayerPrefs();
+        if (typeof volume === 'number') videoRef.current.volume = volume;
+        if (typeof muted === 'boolean') videoRef.current.muted = muted;
+        void player.start();
+        return;
+      }
       if (!mpegts.getFeatureList().mseLivePlayback) {
         setIsLoading(false);
         setLoadError(
@@ -609,7 +659,7 @@ export default function FloatingVideo() {
     }
 
     // Clean up any existing player
-    safeDestroyPlayer();
+    safeDestroyPlayer({ preserveNativeSource: true });
     reconnectAttemptsRef.current = 0;
 
     // Initialize the appropriate player based on content type
@@ -627,9 +677,35 @@ export default function FloatingVideo() {
 
     return () => {
       video?.removeEventListener('volumechange', handleVolumeChange);
-      safeDestroyPlayer();
+      safeDestroyPlayer({ preserveNativeSource: true });
     };
   }, [isVisible, streamUrl, contentType]);
+
+  useEffect(() => () => safeDestroyPlayer(), []);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    setCanAirPlay(contentType === 'vod'
+      ? typeof video?.webkitShowPlaybackTargetPicker === 'function'
+      : supportsNativeAirPlay(video));
+    const update = () => setIsAirPlaying(Boolean(video?.webkitCurrentPlaybackTargetIsWireless));
+    update();
+    video?.addEventListener('webkitcurrentplaybacktargetiswirelesschanged', update);
+    return () => video?.removeEventListener('webkitcurrentplaybacktargetiswirelesschanged', update);
+  }, [isVisible, streamUrl, contentType]);
+
+  const handleAirPlay = () => {
+    const video = videoRef.current;
+    if (typeof video?.webkitShowPlaybackTargetPicker !== 'function') return;
+    setLoadError(null);
+    // Both calls stay inside the tap gesture required by Safari.
+    try {
+      void video.play()?.catch(() => {});
+      video.webkitShowPlaybackTargetPicker();
+    } catch {
+      setLoadError('暂时无法打开 AirPlay，请检查 Apple TV 已开启 AirPlay，并连接同一局域网。');
+    }
+  };
 
   // Modified hideVideo handler to clean up player first
   const handleClose = (e) => {
@@ -982,7 +1058,7 @@ export default function FloatingVideo() {
     <Draggable
       nodeRef={videoContainerRef}
       cancel=".floating-video-no-drag"
-      disabled={isResizing}
+      disabled={isResizing || isMobile}
       position={dragPosition || undefined}
       defaultPosition={initialPositionRef.current || { x: 0, y: 0 }}
       onStart={handleDragStart}
@@ -991,6 +1067,7 @@ export default function FloatingVideo() {
     >
       <div
         ref={videoContainerRef}
+        className="dispatcharr-video-player"
         style={{
           position: 'fixed',
           top: 0,
@@ -1034,6 +1111,18 @@ export default function FloatingVideo() {
           ) : (
             <Box style={{ flex: 1 }} />
           )}
+          <button
+            type="button"
+            className="floating-video-no-drag airplay-button"
+            aria-label="投屏到 Apple TV"
+            aria-pressed={isAirPlaying}
+            disabled={!canAirPlay || isLoading}
+            title={canAirPlay ? '选择 Apple TV 或其他 AirPlay 设备' : '请在 iPhone、iPad 或 Mac 的 Safari 中使用 AirPlay'}
+            onClick={handleAirPlay}
+          >
+            <Airplay size={16} aria-hidden="true" />
+            <span>{isAirPlaying ? '正在投屏' : 'AirPlay'}</span>
+          </button>
           <CloseButton
             onClick={handleClose}
             onTouchEnd={handleClose}
@@ -1070,7 +1159,9 @@ export default function FloatingVideo() {
           {/* Enhanced video element with better controls for VOD */}
           <video
             ref={videoRef}
-            controls={showControls}
+            controls={isMobile || showControls}
+            playsInline
+            x-webkit-airplay="allow"
             className="floating-video-no-drag"
             style={{
               width: '100%',
@@ -1164,7 +1255,7 @@ export default function FloatingVideo() {
           </Box>
         )}
 
-        <ResizeHandles startResize={startResize} />
+        {!isMobile && <ResizeHandles startResize={startResize} />}
       </div>
     </Draggable>
   );

@@ -1,0 +1,14 @@
+[Unit]
+Description=Apply playback headers and remux profiles for imported IPTV providers
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/tangt4/serversetup/iptv
+ExecStart=/usr/bin/python3 /home/tangt4/serversetup/iptv/configure-provider-playback.py --no-refresh
+TimeoutStartSec=3min
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true

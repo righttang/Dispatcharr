@@ -1,0 +1,14 @@
+FROM ghcr.io/dispatcharr/dispatcharr@sha256:96bc548978c68e684677da7895692eeeefb7f0b2edfa38311dac2b702c61d236
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade \
+       python3.13 libpython3.13-stdlib \
+    && uv pip install --python /dispatcharrpy/bin/python 'PyJWT>=2.14.0' \
+    && /dispatcharrpy/bin/python --version \
+    && uv pip check --python /dispatcharrpy/bin/python \
+    && rm -rf /var/lib/apt/lists/* /root/.cache/uv
+RUN rm -rf /usr/lib/python3/dist-packages/jwt \
+           /usr/lib/python3/dist-packages/PyJWT-*.dist-info \
+    && uv pip install --target /usr/lib/python3/dist-packages 'PyJWT>=2.14.0' \
+    && /usr/bin/python3 -c 'import jwt; assert tuple(map(int, jwt.__version__.split("."))) >= (2, 14, 0); print("System PyJWT", jwt.__version__)' \
+    && rm -rf /root/.cache/uv

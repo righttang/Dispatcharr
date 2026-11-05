@@ -50,6 +50,7 @@ from ...server import ProxyServer
 from ...services.channel_service import ChannelService
 from ...utils import get_logger
 from .segmenter import render_media_playlist
+from .http_range import segment_response
 from .session import (
     claim_abandoned_session,
     enter_cold_start,
@@ -187,7 +188,7 @@ class _StalePlaylist(Exception):
     """The playlist descriptor stopped advancing (see _playlist_is_stale)."""
 
 
-def _render_playlist_text(playlist_json):
+def _render_playlist_text(playlist_json, native=False):
     """Render playlist JSON to m3u8 text.
 
     Raises _StalePlaylist for a descriptor nothing is advancing any more, and
@@ -201,12 +202,12 @@ def _render_playlist_text(playlist_json):
         state.get("target", 4),
         adv_target=state.get("adv_target"),
         disc_sequence=state.get("disc_seq", 0),
-        start_behind_seconds=state.get("start_behind"),
+        start_behind_seconds=None if native else state.get("start_behind"),
     )
 
 
 def _cold_start_playlist_chunks(redis_client, token, channel_id, client_id, fmt,
-                                init_grace):
+                                init_grace, native=False):
     """Yield a chunked first playlist: comments while waiting, then the real body.
 
     Sent only when Redis has no playlist yet. Finishes with the rendered
@@ -249,7 +250,7 @@ def _cold_start_playlist_chunks(redis_client, token, channel_id, client_id, fmt,
 
             if playlist_json:
                 try:
-                    body = _render_playlist_text(playlist_json)
+                    body = _render_playlist_text(playlist_json, native=native)
                 except (_StalePlaylist, TypeError, ValueError, KeyError) as e:
                     logger.error(
                         f"[{client_id}] HLS cold-start got unusable playlist "
@@ -382,7 +383,7 @@ def _stop_abandoned_cold_start(redis_client, token, channel_id, client_id, fmt,
         )
 
 
-def _serve_hls_playlist(token):
+def _serve_hls_playlist(token, native=False):
     """Build the rolling live media playlist response for one capability URL."""
     proxy_server = ProxyServer.get_instance()
     redis_client = proxy_server.redis_client
@@ -399,7 +400,7 @@ def _serve_hls_playlist(token):
     playlist_json = redis_client.get(RedisKeys.output_playlist(channel_id, fmt))
     if playlist_json:
         try:
-            body = _render_playlist_text(playlist_json)
+            body = _render_playlist_text(playlist_json, native=native)
         except _StalePlaylist:
             # Temporary unavailability of a live playlist update: 404 so
             # clients retry, rather than 410 Gone for a permanent end.
@@ -433,6 +434,7 @@ def _serve_hls_playlist(token):
             client_id,
             fmt,
             float(ConfigHelper.channel_init_grace_period()),
+            native=native,
         ),
         content_type="application/vnd.apple.mpegurl",
     )
@@ -440,7 +442,7 @@ def _serve_hls_playlist(token):
     return response
 
 
-def _serve_hls_segment(token, seq):
+def _serve_hls_segment(token, seq, request=None):
     """Fetch one media segment by sequence number for a capability URL."""
     proxy_server = ProxyServer.get_instance()
     redis_client = proxy_server.redis_client
@@ -462,8 +464,10 @@ def _serve_hls_segment(token, seq):
         # Expired out of the rolling window (player fell too far behind).
         return JsonResponse({"error": "Segment expired"}, status=404)
 
-    response = HttpResponse(data, content_type="video/mp2t")
-    response["Cache-Control"] = "no-cache"
+    headers = request.headers if request is not None else {}
+    response = segment_response(data, headers.get('Range', ''), headers.get('If-Range', ''))
+    if request is not None and request.method == 'HEAD':
+        response.content = b''
     return response
 
 
@@ -472,19 +476,19 @@ def _serve_hls_segment(token, seq):
 def hls_playlist(request, token):
     """Rolling live media playlist for one HLS capability URL."""
     try:
-        return _serve_hls_playlist(token)
+        return _serve_hls_playlist(token, native=request.GET.get('native') == '1')
     finally:
         # Cold-start may read settings (ORM-capable); this endpoint is polled
         # every few seconds per client, so release stale connections promptly.
         close_old_connections()
 
 
-@api_view(["GET"])
+@api_view(["GET", "HEAD"])
 @permission_classes([AllowAny])
 def hls_segment(request, token, seq):
     """One HLS media segment for an opaque capability URL."""
     try:
-        return _serve_hls_segment(token, seq)
+        return _serve_hls_segment(token, seq, request)
     finally:
         # Keep parity with playlist: release any borrowed connections promptly.
         close_old_connections()

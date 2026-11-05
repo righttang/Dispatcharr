@@ -1,0 +1,5 @@
+{
+  "playlist_redirectors": [
+    { "host": "101.35.240.114", "path": "/live.php" }
+  ]
+}

@@ -1,0 +1,16 @@
+.env
+evidence
+dispatcharr
+iptv-api
+upstream/dispatcharr
+upstream/dispatcharr-mobile
+mobile-frontend
+thumbnails
+thumbnail-state.json
+thumbnail-worker.lock
+**/.git
+**/__pycache__
+upstream/iptv-api/tests
+upstream/iptv-api/docs
+upstream/iptv-api/desktop_ui
+upstream/iptv-api/tkinter_ui

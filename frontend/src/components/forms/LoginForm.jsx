@@ -37,6 +37,7 @@ const LoginForm = () => {
   const [savePassword, setSavePassword] = useState(false);
   const [forgotPasswordOpened, setForgotPasswordOpened] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [loginError, setLoginError] = useState('');
 
   // Simple base64 encoding/decoding for localStorage
   // Note: This is obfuscation, not encryption. Use browser's password manager for real security.
@@ -97,29 +98,35 @@ const LoginForm = () => {
   }, [isAuthenticated, navigate, nextParam]);
 
   const handleInputChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
+    const { name, value } = e.target;
+    setFormData((previous) => ({ ...previous, [name]: value }));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    // Password managers may fill inputs without firing React's change handler.
+    const fields = new FormData(e.currentTarget);
+    const credentials = {
+      username: String(fields.get('username') ?? '').trim(),
+      password: String(fields.get('password') ?? ''),
+    };
+    setFormData(credentials);
+    setLoginError('');
     setIsLoading(true);
 
     try {
-      await login(formData);
+      await login(credentials);
 
       // Save username if remember me is checked
       if (rememberMe) {
         localStorage.setItem(
           'dispatcharr_remembered_username',
-          formData.username
+          credentials.username
         );
 
         // Save password if save password is checked
         if (savePassword) {
-          const encoded = encodePassword(formData.password);
+          const encoded = encodePassword(credentials.password);
           if (encoded) {
             localStorage.setItem('dispatcharr_saved_password', encoded);
           }
@@ -135,6 +142,15 @@ const LoginForm = () => {
       // Navigation will happen automatically via the useEffect or route protection
     } catch (e) {
       console.log(`Failed to login: ${e}`);
+      if (e?.status === 401) {
+        setLoginError('用户名或密码不正确，请清空密码框后重新输入，检查浏览器是否自动填入旧密码。');
+        localStorage.removeItem('dispatcharr_saved_password');
+        setSavePassword(false);
+      } else if (e?.status === 429) {
+        setLoginError('登录尝试过于频繁，请等待 1 分钟再试。');
+      } else {
+        setLoginError('登录失败，请检查输入或稍后重试。');
+      }
       if (e?.message === 'Unauthorized') {
         showNotification({
           title: 'Web UI Access Denied',
@@ -187,6 +203,9 @@ const LoginForm = () => {
             <TextInput
               label="Username"
               name="username"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
               value={formData.username}
               onChange={handleInputChange}
               required
@@ -196,10 +215,13 @@ const LoginForm = () => {
               label="Password"
               type="password"
               name="password"
+              autoComplete="current-password"
               value={formData.password}
               onChange={handleInputChange}
               // required
             />
+
+            {loginError && <Text role="alert" c="red" size="sm">{loginError}</Text>}
 
             <Group justify="space-between" align="center">
               <Group align="center" spacing="xs">

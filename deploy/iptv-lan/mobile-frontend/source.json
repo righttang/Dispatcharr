@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/Dispatcharr/Dispatcharr",
+  "commit": "e71bd6cd50931e1381f85521b7f914c47f9528b7",
+  "frontend": "0.33.0",
+  "patch": "tracked-changes.patch",
+  "new_files": {
+    "src/MobileChannels.jsx": "frontend/src/components/MobileChannels.jsx",
+    "src/mobile.css": "frontend/src/mobile.css",
+    "src/MobileChannels.test.jsx": "frontend/src/components/__tests__/MobileChannels.test.jsx",
+    "src/LiveAirPlay.js": "frontend/src/utils/components/LiveAirPlay.js",
+    "src/LiveAirPlay.test.js": "frontend/src/utils/components/__tests__/LiveAirPlay.test.js",
+    "src/hls-http-range.py": "apps/proxy/live_proxy/output/hls/http_range.py"
+  }
+}

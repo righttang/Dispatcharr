@@ -8,6 +8,8 @@ import useAuthStore from '../store/auth';
 import useLogosStore from '../store/logos';
 import useBrowserStorage from '../hooks/useBrowserStorage';
 import ErrorBoundary from '../components/ErrorBoundary';
+import { useMediaQuery } from '@mantine/hooks';
+import MobileChannels from '../components/MobileChannels';
 
 const PageContent = () => {
   const authUser = useAuthStore((s) => s.user);
@@ -101,9 +103,10 @@ const PageContent = () => {
 };
 
 const ChannelsPage = () => {
+  const isMobile = useMediaQuery('(max-width: 900px)');
   return (
     <ErrorBoundary inline>
-      <PageContent />
+      {isMobile ? <MobileChannels /> : <PageContent />}
     </ErrorBoundary>
   );
 };

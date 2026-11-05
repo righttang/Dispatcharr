@@ -79,8 +79,8 @@ vi.mock('@mantine/core', async () => ({
   ),
   Center: ({ children }) => <div>{children}</div>,
   Stack: ({ children }) => <div>{children}</div>,
-  Text: ({ children, c, size }) => (
-    <span data-color={c} data-size={size}>
+  Text: ({ children, c, size, role }) => (
+    <span data-color={c} data-size={size} role={role}>
       {children}
     </span>
   ),
@@ -258,6 +258,21 @@ describe('LoginForm', () => {
   // ── Successful login ───────────────────────────────────────────────────────
 
   describe('successful login', () => {
+    it('submits the visible autofilled values instead of saved React state', async () => {
+      localStorage.setItem('dispatcharr_remembered_username', 'old-user');
+      localStorage.setItem('dispatcharr_saved_password', btoa('old-password'));
+      const { mockLogin } = setupMocks();
+      renderLoginForm();
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(getUsername(), ' admin ');
+      setter.call(getPassword(), ' new-password ');
+      fireEvent.submit(getUsername().form);
+      await waitFor(() => expect(mockLogin).toHaveBeenCalledWith({
+        username: 'admin', password: ' new-password ',
+      }));
+      expect(localStorage.getItem('dispatcharr_saved_password')).toBe(btoa(' new-password '));
+    });
+
     it('calls login with username and password', async () => {
       const { mockLogin } = setupMocks({ loginResult: Promise.resolve(true) });
       renderLoginForm();
@@ -340,6 +355,28 @@ describe('LoginForm', () => {
   // ── Failed login ───────────────────────────────────────────────────────────
 
   describe('failed login', () => {
+    it('shows invalid credentials, removes the saved password, and skips data loading', async () => {
+      localStorage.setItem('dispatcharr_remembered_username', 'admin');
+      localStorage.setItem('dispatcharr_saved_password', btoa('old-password'));
+      const { mockLogin, mockInitData } = setupMocks();
+      mockLogin.mockRejectedValue(Object.assign(new Error('Invalid credentials'), { status: 401 }));
+      renderLoginForm();
+      fireEvent.submit(getUsername().form);
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('用户名或密码不正确'));
+      expect(mockInitData).not.toHaveBeenCalled();
+      expect(localStorage.getItem('dispatcharr_saved_password')).toBeNull();
+      expect(screen.getByLabelText(/save password/i)).not.toBeChecked();
+    });
+
+    it('explains a login rate limit without loading account data', async () => {
+      const { mockLogin, mockInitData } = setupMocks();
+      mockLogin.mockRejectedValue(Object.assign(new Error('Too many requests'), { status: 429 }));
+      renderLoginForm();
+      fireEvent.submit(getUsername().form);
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('等待 1 分钟'));
+      expect(mockInitData).not.toHaveBeenCalled();
+    });
+
     it('does not navigate when login fails', async () => {
       setupMocks({ loginResult: Promise.resolve(false) });
       renderLoginForm();

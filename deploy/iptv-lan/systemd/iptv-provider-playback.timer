@@ -1,0 +1,11 @@
+[Unit]
+Description=Maintain dynamic IPTV provider playback settings
+
+[Timer]
+OnBootSec=4min
+OnUnitInactiveSec=5min
+AccuracySec=20s
+Unit=iptv-provider-playback.service
+
+[Install]
+WantedBy=timers.target

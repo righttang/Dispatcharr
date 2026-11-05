@@ -1,0 +1,78 @@
+name: iptv
+
+services:
+  iptv-api:
+    image: guovern/iptv-api:latest
+    container_name: iptv-api
+    restart: unless-stopped
+    ports:
+      - "192.168.50.84:18088:8080"
+    volumes:
+      - ./iptv-api/config:/iptv-api/config
+      - ./iptv-api/output:/iptv-api/output
+      - ./start-iptv-api.py:/usr/local/bin/start-iptv-api.py:ro
+      - ./run-updater.py:/iptv-api/run-updater.py:ro
+      - ./provider_compat.py:/iptv-api/provider_compat.py:ro
+    environment:
+      PUBLIC_URL: http://192.168.50.84:18088
+      NGINX_HTTP_PORT: "8080"
+      IPTV_API_PLAIN_OUTPUT: "1"
+      TZ: Australia/Melbourne
+    cpus: 1.5
+    mem_limit: 1536m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/', timeout=8).read(1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  dispatcharr:
+    image: ghcr.io/dispatcharr/dispatcharr:latest
+    container_name: dispatcharr
+    restart: unless-stopped
+    ports:
+      - "192.168.50.84:9191:9191"
+    volumes:
+      - ./dispatcharr/data:/data
+      - ./mobile-frontend/dist:/app/frontend/dist:ro
+      - ./thumbnails:/app/static/channel-thumbnails:ro
+      - ./capture-thumbnail.py:/opt/iptv-tools/capture-thumbnail.py:ro
+      - ./upstream/dispatcharr-mobile/apps/proxy/live_proxy/output/hls/views.py:/app/apps/proxy/live_proxy/output/hls/views.py:ro
+      - ./upstream/dispatcharr-mobile/apps/proxy/live_proxy/output/hls/http_range.py:/app/apps/proxy/live_proxy/output/hls/http_range.py:ro
+    environment:
+      DISPATCHARR_ENV: aio
+      REDIS_HOST: localhost
+      CELERY_BROKER_URL: redis://localhost:6379/0
+      DISPATCHARR_LOG_LEVEL: info
+      DISPATCHARR_PORT: "9191"
+      UWSGI_WORKERS: "2"
+      CELERY_MAX_WORKERS: "2"
+      CELERY_MIN_WORKERS: "1"
+      TZ: Australia/Melbourne
+    cpus: 2
+    mem_limit: 3g
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--max-time", "8", "http://127.0.0.1:9191/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+networks:
+  default:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+        - subnet: fdf1:7486:4950:1::/64

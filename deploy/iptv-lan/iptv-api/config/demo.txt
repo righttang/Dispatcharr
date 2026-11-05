@@ -1,0 +1,288 @@
+📺央视频道,#genre#
+CCTV-1
+CCTV-2
+CCTV-3
+CCTV-4
+CCTV-5
+CCTV-5+
+CCTV-6
+CCTV-7
+CCTV-8
+CCTV-9
+CCTV-10
+CCTV-11
+CCTV-12
+CCTV-13
+CCTV-14
+CCTV-15
+CCTV-16
+CCTV-17
+CETV-1
+CETV-2
+CETV-3
+CETV-4
+
+📡卫视频道,#genre#
+广东卫视
+香港卫视
+浙江卫视
+湖南卫视
+北京卫视
+湖北卫视
+黑龙江卫视
+安徽卫视
+重庆卫视
+东方卫视
+东南卫视
+甘肃卫视
+广西卫视
+贵州卫视
+海南卫视
+河北卫视
+河南卫视
+吉林卫视
+江苏卫视
+江西卫视
+辽宁卫视
+内蒙古卫视
+宁夏卫视
+青海卫视
+山东卫视
+山西卫视
+陕西卫视
+四川卫视
+深圳卫视
+三沙卫视
+天津卫视
+西藏卫视
+新疆卫视
+云南卫视
+
+公开中文频道,#genre#
+8TV
+ABN China
+Ando TV
+Angel TV Chinese
+Anhui TV
+Anshun Comprehensive News Channel
+BabyFirst
+Baicheng TV
+Beautiful Life TV
+Beijing Satellite TV
+Beijing Satellite TV HD
+Berita RTM
+Bingtuan Satellite TV
+BRTV Kaku Childrens Channel
+BSTV (Hong Kong)
+CCTV+ 1
+CCTV+ 2
+CCTV-1 HD
+CCTV-4 America
+CCTV-4 Asia
+CCTV-4 Europe
+CCTV-4K HD
+CCTV-6 HD
+CCTV-8K HD
+CCTV-9 (576i)
+CCTV-13 HD
+CCTV-14 HD
+CCTV-16 HD
+CCTV-17 HD
+CCTV-Billiards
+CCTV-Culture of Quality SD
+CCTV-Golf & Tennis
+CCTV-Health
+CCTV-Nostalgia Theater
+CCTV-Storm Football
+CCTV-Storm Music
+CCTV-Storm Theater
+CCTV-The First Theater
+CCTV-Weapon & Technology
+CCTV-Women's Fashion SD
+CCTV-World Geography SD
+Celestial Movies (576i)
+CGNTV Chinese
+CGTN
+CGTN Global Biz
+Channel 8 (Singapore)
+Channel U
+Chaozhou Public Channel
+CHC Action
+CHC Home Theater
+China Travel
+China Weather Channel
+Chuxiong News Channel
+Chuzhou News Channel
+Chuzhou Public Channel
+Chuzhou Science & Education Channel
+CND Film Discovery Channel
+CND Film Middle School Channel
+CreaTV Channel 15
+CTi Variety
+CTS
+CTS News
+DaAi 1
+DaAi 2
+DAAI TV
+DHA
+Discovering China
+Documentary Humanities Channel
+Dongguan Comprehensive News Channel
+Dragon TV International
+Dunhuang TV
+EBC Financial News
+EBC Foreign Movie
+EBC News
+Fengshang Shopping Channel
+FTV (Taiwan)
+FTV One
+FTV Taiwan
+Fujian Comprehensive Channel
+God Stands Kids Club TV Chinese
+God Stands TV Chinese
+Golden Eagle Cartoon
+Good 2
+Good TV (Taiwan)
+Guangdong Satellite TV
+Guangdong TV America
+Guangxi Variety & Travel Channel
+Guangzhou TV
+Guizhou TV
+Hakka TV
+Harbin Comprehensive News Channel
+Harbin Movie Channel
+Hebei TV
+Hebi News Channel
+Heilongjiang TV
+Hezheng TV
+High Channel TV
+Hong Kong International Business Channel
+Hunan Economy Channel
+Hunan News Channel
+Hunan Politics & Law Channel
+Hunan TV
+Hunan Womens Channel
+Indigenous TV
+Jade
+Jiangsu City Channel
+Jiangsu Educational Channel
+Jiangsu Movie Channel
+Jiangsu Public & News Channel
+Jiangsu Satellite TV
+Jiangsu Sports & Leisure Channel
+Jiangsu Variety Channel
+Jiangxi Children's Channel
+Jiangxi City Channel
+Jiangxi Economy & Life Channel
+Jiangxi Movie Channel
+Jiangxi Public & Agriculture Channel
+Jiangxi TV
+Jilin City Channel
+Jilin Lifestyle Channel
+Jilin Movie Channel
+Jilin Rural Channel
+Jingmen Comprehensive News Channel
+Jiuquan TV News Comprehensive Channel
+Kangba TV
+KIX
+Lanzhou Comprehensive News Channel
+Lanzhou Culture & Tourism Channel
+Liangshan TV
+Liaoning TV
+LLBN TV Chinese
+like Gecko) Chrome/144.0.0.0 Safari/537.36" group-title="General",Lotus TV
+Love Nature
+Love Nature HD
+Luxe TV
+Mei Ah Movie Channel
+meWATCH LIVE 1
+MOMO TV
+Nanchang News & Generalist Channel
+Nei Monggol TV 2 Mongolian Culture Channel
+like Gecko) Chrome/144.0.0.0 Safari/537.36" group-title="Undefined",Nei Monggol TV
+Ningxia Satellite Channel
+NTD TV
+NTD TV West
+NTD TV Asia-Pacific
+NTD TV Canada
+NTD TV Canada West
+NTD TV China
+Okey
+Peace TV Chinese
+Phoenix Chinese Channel
+Phoenix InfoNews Channel
+Pingxiang TV News Channel
+PTS 3
+Qianjiang Channel
+Qinghai TV
+QTV-1
+QTV-2
+QTV-3
+QTV-4
+QTV-5
+QTV-6
+RTHK TV 31
+RTHK TV 32
+RTHK TV 33
+SET News
+Shandong Satellite TV
+Shandong TV
+Shandong TV Agricultural Science Channel
+Shandong TV Children's Channel
+Shandong TV Life Channel
+Shandong TV Qilu Channel
+Shandong TV Sports Channel
+Shandong TV Variety Channel
+Shenzhen Satellite TV
+Sichuan Satellite TV
+Sichuan TV Women and Children Channel
+Siping TV
+SJTV
+Taiwan Indigenous TV
+TDM Entertainment
+TDM Information
+TDM Ou Mun
+TDM Sports
+TDM-Macau Satellite
+TechStorm
+Thrill
+Tianjin TV
+Tonghua TV
+TTV
+TTV News
+TV2 (Malaysia)
+TV BRICS Chinese
+TVBS News
+TVBS-Asia
+ViuTV (1080i)
+VoA TV China
+WCETV Digital Channel 31.8
+WXTV
+Xi'an Business Information Channel
+Xi'an Silk Road Channel
+Xinjiang TV 1
+Xizang TV Chinese
+Xuzhou Economic Life Channel
+Yanbian Satellite TV
+You Man Cartoon Channel
+Yunnan Satellite TV
+Zhejiang Children's Channel
+Zhejiang Economic Channel
+Zhejiang Education Technology Channel
+Zhejiang International Channel
+Zhejiang Minsheng Leisure
+Zhejiang Satellite TV
+
+澳洲频道,#genre#
+ABC Entertains
+ABC Kids
+ABC News
+ABC TV
+ABC TV ACT
+ABC TV NT
+ABC TV QLD
+ABC TV SA
+ABC TV TAS
+ABC TV VIC
+ABC TV WA
+ABC TV Plus
