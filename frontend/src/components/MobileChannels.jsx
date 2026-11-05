@@ -135,7 +135,7 @@ export default function MobileChannels() {
           <RefreshCw size={19} className={loading ? 'mobile-spin' : ''} />
         </button>
       </div>
-      <p className="mobile-snapshot-note">频道画面在测速后抓取 · 时间见图片角标</p>
+      <p className="mobile-snapshot-note">频道画面定时更新 · 时间见图片角标</p>
       {hasPlayer && <p className="mobile-now-playing"><span />正在播放：{metadata?.name}</p>}
       <div className="mobile-channel-tools">
         <div className="mobile-search">

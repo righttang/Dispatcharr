@@ -1,5 +1,5 @@
 [Unit]
-Description=Refresh IPTV channel thumbnails after successful speed measurements
+Description=Refresh tested IPTV channel thumbnails and expired snapshots
 After=docker.service network-online.target
 Wants=network-online.target
 Requires=docker.service

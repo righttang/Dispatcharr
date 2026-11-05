@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parent
 BASE = 'http://192.168.50.84:9191'
 PUBLIC = '/static/channel-thumbnails/'
 LOG = logging.getLogger('iptv-thumbnails')
+REFRESH_SECONDS = 30 * 60
 
 
 class Dispatcharr:
@@ -101,8 +102,9 @@ def due(previous, candidate, now, image_exists):
     if candidate['tested_at'] > previous.get('tested_at', 0):
         return True
     if previous.get('status') == 'success' and image_exists:
-        return False
-    return previous.get('failures', 0) < 3 and now - previous.get('attempted_at', 0) >= 900
+        return now - previous.get('captured_at', 0) >= REFRESH_SECONDS
+    retry_after = 900 if previous.get('failures', 0) < 3 else 3600
+    return now - previous.get('attempted_at', 0) >= retry_after
 
 
 def atomic_write(path, data, mode=0o644):

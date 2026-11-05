@@ -33,6 +33,8 @@ cp -a upstream/dispatcharr-mobile/frontend/dist/. mobile-frontend/dist/
 
 `sources.json` 记录两个项目的基准版本。`mobile-frontend/` 中的补丁和新增源码快照保留原安装的恢复格式；本分支已经包含这些修改，请勿再次应用补丁。
 
+更新已有服务时，先将构建的 `assets/` 同步到运行目录的 `mobile-frontend/dist/assets/`，再执行 `docker exec dispatcharr cp -a /app/frontend/dist/assets/. /app/static/assets/`，确认新资源可以访问后再替换 `index.html`，并平滑重载应用进程。Nginx 从 `/app/static/assets/` 提供资源，Django 会缓存入口模板；仅替换 `frontend/dist/` 不足以完成热更新。首次启动容器时，入口脚本会通过 `collectstatic` 同步资源。
+
 ## 原主机依赖与路径
 
 - `compose.yml` 及部分脚本使用 `192.168.50.84`，systemd 服务使用 `/home/tangt4/serversetup/iptv`。迁移时先调整地址、运行路径和 Docker 子网，再安装定时任务。
@@ -40,6 +42,10 @@ cp -a upstream/dispatcharr-mobile/frontend/dist/. mobile-frontend/dist/
 - `Dockerfile.dispatcharr` 保留经过修补的基础镜像配方；定制前端和两个 HLS 文件通过 Compose 只读挂载。构建或拉取镜像后，按主机既有流程完成扫描，再启动服务。
 - 浏览器验证脚本使用原主机已有的 Playwright 安装与浏览器库。新主机运行前需修改脚本中的 Playwright 路径，并准备对应浏览器；验证脚本不参与生产服务启动。
 - `configure-dispatcharr.py` 初始化订阅与分组，`configure-provider-playback.py` 维护匹配动态源的播放配置，`configure-airplay.py` 创建原生 HLS 兼容输出配置。它们从运行目录的 `.env` 读取账号信息。
+
+## 缩略图刷新
+
+后台每分钟检查一次；测速结果更新、线路变化或图片超过 30 分钟时进入截图队列。每轮最多 8 台，按最早尝试时间轮换，实际更新时间受排队与源可用性影响。失败保留同源旧图，前期重试间隔至少 15 分钟，连续失败 3 次后降为每小时最多一次；成功后自动恢复。图片 URL 带抓取时间版本号，网页每分钟读取索引。
 
 ## 已有验证
 

@@ -29,7 +29,7 @@ class ThumbnailsTest(unittest.TestCase):
 
     def test_new_measurement_triggers_once_and_failures_are_bounded(self):
         previous = worker.refresh_record({}, self.row, 200, True)
-        self.assertFalse(worker.due(previous, self.row, 3000, True))
+        self.assertFalse(worker.due(previous, self.row, 300, True))
         newer = {**self.row, 'tested_at': 101}
         self.assertTrue(worker.due(previous, newer, 200, True))
         previous = worker.refresh_record(previous, newer, 300, False)
@@ -38,7 +38,26 @@ class ThumbnailsTest(unittest.TestCase):
         for now in (1200, 2100):
             previous = worker.refresh_record(previous, newer, now, False)
         self.assertEqual(previous['failures'], 3)
-        self.assertFalse(worker.due(previous, newer, 10000, True))
+        self.assertFalse(worker.due(previous, newer, 3000, True))
+        self.assertTrue(worker.due(previous, newer, 5700, True))
+
+    def test_successful_snapshot_expires_without_a_new_measurement(self):
+        previous = worker.refresh_record({}, self.row, 200, True)
+        self.assertFalse(worker.due(previous, self.row, 1999, True))
+        self.assertTrue(worker.due(previous, self.row, 2000, True))
+        refreshed = worker.refresh_record(previous, self.row, 2010, True)
+        self.assertFalse(worker.due(refreshed, self.row, 2100, True))
+
+    def test_expired_snapshot_obeys_failure_backoff_and_recovers(self):
+        previous = worker.refresh_record({}, self.row, 200, True)
+        failed = worker.refresh_record(previous, self.row, 2000, False)
+        self.assertEqual(failed['captured_at'], 200)
+        self.assertFalse(worker.due(failed, self.row, 2001, True))
+        self.assertTrue(worker.due(failed, self.row, 2900, True))
+        recovered = worker.refresh_record(failed, self.row, 2910, True)
+        self.assertEqual(recovered['failures'], 0)
+        self.assertEqual(recovered['captured_at'], 2910)
+        self.assertFalse(worker.due(recovered, self.row, 3000, True))
 
     def test_failed_refresh_preserves_last_good_picture_but_source_change_does_not(self):
         success = worker.refresh_record({}, self.row, 200, True)
@@ -59,6 +78,11 @@ class ThumbnailsTest(unittest.TestCase):
             self.assertEqual(result[UUID]['captured_at'], 200)
             self.assertNotIn('example.test', raw)
             self.assertNotIn('headers', raw)
+            refreshed = worker.refresh_record(record, self.row, 2010, True)
+            worker.publish(output, {UUID: refreshed}, {UUID: self.row})
+            fresh = json.loads((output / 'index.json').read_text())['channels'][UUID]
+            self.assertNotEqual(fresh['url'], result[UUID]['url'])
+            self.assertEqual(fresh['captured_at'], 2010)
             worker.publish(output, {UUID: record}, {UUID: {**self.row, 'source_hash': 'changed'}})
             self.assertEqual(json.loads((output / 'index.json').read_text())['channels'], {})
 

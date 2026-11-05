@@ -44,6 +44,16 @@ describe('Mobile channel snapshots', () => {
     expect(screen.getByText('暂无截图')).toBeInTheDocument();
   });
 
+  it('loads a new image URL and capture time when the same channel is refreshed', async () => {
+    const { container } = render(<MobileChannels />);
+    await waitFor(() => expect(container.querySelector('img')).toHaveAttribute('src', snapshot.url));
+    const fresh = { ...snapshot, url: '/static/channel-thumbnails/test.jpg?v=2', captured_at: snapshot.captured_at + 1800 };
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ channels: { 'channel-1': fresh } }) });
+    fireEvent.click(screen.getByRole('button', { name: '刷新频道' }));
+    await waitFor(() => expect(container.querySelector('img')).toHaveAttribute('src', fresh.url));
+    expect(container.querySelector('time')).toHaveAttribute('datetime', new Date(fresh.captured_at * 1000).toISOString());
+  });
+
   it('replaces a broken image with a placeholder and recovers after a new capture', async () => {
     const { container } = render(<MobileChannels />);
     await waitFor(() => expect(container.querySelector('img')).not.toBeNull());
